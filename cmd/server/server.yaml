@@ -1,0 +1,20 @@
+# GTun-Lite 服务端配置。所有键可省略（用默认值），显式写出便于部署时核对。
+control:
+  bind: "0.0.0.0:10000"        # TCP 控制面
+  register_timeout: 10s        # 未注册连接的沉默上限
+  heartbeat_timeout: 60s       # 会话失活阈值（须明显大于客户端心跳 20s）
+  write_timeout: 5s            # 单条下行写超时 / 发送队列卡死上限
+  max_connections: 1000        # 同时在线的设备连接上限，超出注册被拒（server_full）
+probe:
+  bind: "0.0.0.0"              # 5 个 UDP 探测端点的绑定地址
+  base_port: 10000             # 连续占用 10000-10004
+admin:
+  bind: "127.0.0.1:9090"       # 管理 API；跨主机管理走 SSH 隧道，不暴露公网
+database:
+  path: "gtun.db"              # 空库自动按内嵌 schema 建表
+limits:
+  max_devices_per_network: 8   # 单网络成员上限；性能目标按 8 设计，调大前先读 设计文档/08-构建配置与部署.md 已知边界
+  min_cidr_prefix: 24          # 建网允许的 CIDR 前缀下限（防网段大而无当）
+  max_cidr_prefix: 28          # 前缀上限；启动时校验设备上限装得进最小网段
+logging:
+  level: "info"                # debug/info/warn/error；排障用 debug

@@ -1,0 +1,570 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<title>GTun-Lite 控制台</title>
+<style>
+  :root {
+    --bg: #f5f5f2; --panel: #fff; --line: #e2e2dd;
+    --ink: #24292e; --muted: #8a8f94;
+    --accent: #1f6f43; --amber: #9a6700; --red: #c0392b;
+    --sidebar-bg: #23272b; --sidebar-ink: #c7cdd2;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; height: 100vh; display: flex; flex-direction: column;
+    font: 15px/1.5 system-ui, sans-serif; color: var(--ink); background: var(--bg);
+  }
+  header {
+    flex: 0 0 auto; display: flex; align-items: center; gap: 10px;
+    padding: 8px 16px; background: var(--panel); border-bottom: 1px solid var(--line);
+  }
+  .brand { font-weight: 700; }
+  header .sub { color: var(--muted); }
+  header .right { margin-left: auto; display: flex; align-items: center; gap: 14px; }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #b0b0aa; margin-right: 4px; vertical-align: 0; }
+  .dot.on { background: var(--accent); }
+
+  #layout { flex: 1 1 auto; display: flex; min-height: 0; }
+  nav { flex: 0 0 190px; overflow-y: auto; background: var(--sidebar-bg); }
+  nav .group { padding: 14px 14px 4px; font-size: 12.5px; letter-spacing: .08em; color: #7b838a; }
+  nav button {
+    display: flex; align-items: baseline; gap: 8px; width: 100%;
+    background: none; border: none; cursor: pointer; text-align: left;
+    color: var(--sidebar-ink); padding: 7px 14px; font-size: 15px;
+  }
+  nav button .tname { font-family: ui-monospace, monospace; font-size: 14px; }
+  nav button em { margin-left: auto; font-style: normal; color: #7b838a; font-size: 12.5px; }
+  nav button:hover { background: #2c3237; }
+  nav button.active { background: #2c3237; color: #fff; box-shadow: inset 3px 0 0 var(--accent); }
+
+  main { flex: 1 1 auto; overflow-y: auto; padding: 14px 18px 24px; }
+  .viewbar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
+  .hint { color: var(--muted); font-size: 14px; }
+  .crumb { margin-bottom: 8px; }
+  .crumb .title { font-size: 17px; font-weight: 600; }
+  section + section { margin-top: 26px; }
+
+  table { border-collapse: collapse; width: 100%; background: var(--panel); border: 1px solid var(--line); }
+  th {
+    font: 13px ui-monospace, monospace; color: var(--muted); text-align: left;
+    padding: 8px 12px; background: #efefeb; border-bottom: 1px solid var(--line); white-space: nowrap;
+  }
+  td { padding: 6px 12px; border-bottom: 1px solid #ecece8; font-size: 14px; vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  td.num { color: var(--muted); width: 1%; font-family: ui-monospace, monospace; font-size: 13px; }
+  td.mono, .mono { font-family: ui-monospace, monospace; font-size: 13.5px; }
+  td.ops { text-align: right; white-space: nowrap; }
+  td.empty { text-align: center; color: var(--muted); padding: 18px; }
+
+  .chip {
+    font: 13px ui-monospace, monospace; padding: 1px 8px; border-radius: 3px;
+    border: 1px solid var(--line); background: #fafaf8; color: var(--muted);
+  }
+  .chip.connecting { color: var(--amber); border-color: #e8d9a8; background: #fff8e6; }
+  .chip.connected { color: var(--accent); border-color: #bcd9c6; background: #eef7f1; }
+  .fail-reason { font: 12px ui-monospace, monospace; color: var(--red); margin-top: 2px; }
+
+  .btn {
+    font: 14px system-ui, sans-serif; padding: 3px 12px; border: 1px solid #c9c9c3;
+    border-radius: 4px; background: var(--panel); cursor: pointer;
+  }
+  .btn:hover:not(:disabled) { background: #f0f0ec; }
+  .btn:disabled { color: #b5b5af; cursor: default; }
+  .btn.warn { color: var(--red); border-color: #e0b4ae; }
+
+  form.bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 0 0 10px; }
+  form.bar input, form.bar select {
+    font: 14px system-ui, sans-serif; padding: 4px 10px;
+    border: 1px solid #c9c9c3; border-radius: 4px; background: var(--panel); min-width: 60px;
+  }
+  form.bar input { width: 220px; }
+
+  footer {
+    flex: 0 0 auto; display: flex; gap: 16px; padding: 6px 16px;
+    background: var(--panel); border-top: 1px solid var(--line); font-size: 13.5px; color: var(--muted);
+  }
+  #msg.ok { color: var(--accent); }
+  #msg.err { color: var(--red); }
+  footer .meta { margin-left: auto; white-space: nowrap; }
+</style>
+</head>
+<body>
+<header>
+  <span class="brand">GTun-Lite</span><span class="sub">管理控制台</span>
+  <span class="right">
+    <span id="ready"><span class="dot"></span>检测中…</span>
+    <label><input type="checkbox" id="autorefresh" checked> 5s 自动刷新</label>
+    <button class="btn" id="refresh-now">立即刷新</button>
+  </span>
+</header>
+<div id="layout">
+  <nav id="sidebar">
+    <div class="group">配置（落库）</div>
+    <button data-view="devices"><span class="tname">devices</span> 设备 <em id="count-devices"></em></button>
+    <button data-view="networks"><span class="tname">networks</span> 网络 <em id="count-networks"></em></button>
+    <div class="group">运行时（内存）</div>
+    <button data-view="links"><span class="tname">links</span> 链路 <em id="count-links"></em></button>
+  </nav>
+  <main id="main"></main>
+</div>
+<footer>
+  <span id="msg"></span>
+  <span class="meta" id="meta"></span>
+</footer>
+
+<script>
+'use strict';
+
+// ---------- 全局状态与工具 ----------
+
+const state = {
+  view: 'devices', networkId: null,
+  devices: [], networks: [], links: [], detail: null,
+  ready: false,
+};
+let lastSignature = '';
+let msgTimer = null;
+
+const $ = sel => document.querySelector(sel);
+const esc = s => String(s ?? '').replace(/[&<>"]/g,
+  c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const shortId = (id, n = 8) => id && id.length > n ? id.slice(0, n) + '…' : (id || '');
+
+function fmtDT(value) {
+  const s = String(value || '');
+  return s.length >= 19 ? s.slice(0, 10) + ' ' + s.slice(11, 19) : s;
+}
+function fmtAgo(iso) {
+  const seconds = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
+  if (seconds < 60) return Math.floor(seconds) + ' 秒前';
+  if (seconds < 3600) return Math.floor(seconds / 60) + ' 分钟前';
+  if (seconds < 86400) return Math.floor(seconds / 3600) + ' 小时前';
+  return Math.floor(seconds / 86400) + ' 天前';
+}
+const onlineDot = on => `<span class="dot ${on ? 'on' : ''}" title="${on ? '在线' : '离线'}"></span>`;
+// 零值时间（0001-01-01）表示从未收到上报，显示 — 而不是荒谬的相对时间。
+const isZeroTime = iso => !iso || iso.startsWith('0001-01-01');
+
+// 失败原因（common/reason.go 封闭表）与 API 错误码的中文映射。
+// 原始代码值保留在 title 悬停与消息条里，便于对照服务端日志。
+const reasonText = {
+  PROBE_TIMEOUT: '探测超时',
+  PROBE_IP_CHANGED: '出口 IP 轮换',
+  PUNCH_TIMEOUT: '打洞超时',
+  NAT_UNSUPPORTED: '双方 NAT 均不可预测',
+  ROUTE_CONFLICT: '路由冲突',
+  TUN_CREATE_FAILED: 'TUN 设备创建失败',
+  CONFIG_INVALID: '配置非法',
+  TUNNEL_LOST: '隧道保活失活',
+  PEER_OFFLINE: '对端控制连接离线',
+  HANDSHAKE_FAILED: '握手失败',
+  QUEUE_FULL: '队列满',
+  INTERNAL_ERROR: '内部错误',
+};
+const codeText = {
+  invalid_body: '请求体格式错误',
+  invalid_name: '名称非法',
+  invalid_cidr: '网段非法',
+  invalid_network_id: '网络 ID 非法',
+  invalid_device_id: '设备 ID 非法',
+  invalid_peering_id: '配对 ID 非法',
+  invalid_pair: '设备对非法',
+  not_found: '目标不存在',
+  cidr_taken: '网段已被其他网络占用',
+  already_member: '设备已属于某个网络',
+  network_full: '网络成员已满',
+  address_exhausted: '网段内地址耗尽',
+  not_members: '两台设备不都是本网络成员',
+  still_member: '设备仍在网络中，请先移出',
+  device_online: '设备控制连接在线，请先停止其客户端',
+  peer_offline: '对端离线',
+  internal_error: '服务器内部错误',
+};
+
+function setMsg(text, kind) {
+  const el = $('#msg');
+  el.textContent = text;
+  el.className = kind || '';
+  clearTimeout(msgTimer);
+  if (kind === 'ok') msgTimer = setTimeout(() => { el.textContent = ''; el.className = ''; }, 4000);
+}
+function setMeta() {
+  $('#meta').textContent =
+    `设备 ${state.devices.length} · 网络 ${state.networks.length} · 链路 ${state.links.length}` +
+    ` · 刷新于 ${new Date().toLocaleTimeString('zh-CN', { hour12: false })}`;
+}
+
+// ---------- API 调用 ----------
+
+async function call(method, path, body) {
+  let res;
+  try {
+    res = await fetch(path, {
+      method,
+      headers: body !== undefined ? { 'Content-Type': 'application/json' } : undefined,
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    });
+  } catch {
+    throw new Error('无法连接管理 API');
+  }
+  const data = await res.json().catch(() => null);
+  if (!res.ok) {
+    const d = data || {};
+    const code = d.code ? `${codeText[d.code] || d.code}（${d.code}）` : '';
+    throw new Error(`${res.status} ${code} ${d.message || ''}`.replace(/\s+/g, ' ').trim());
+  }
+  return data;
+}
+
+async function refresh() {
+  const [ready, devices, networks, links] = await Promise.allSettled([
+    fetch('/ready').then(r => r.ok),
+    call('GET', '/api/devices'),
+    call('GET', '/api/networks'),
+    call('GET', '/api/links'),
+  ]);
+  state.ready = ready.status === 'fulfilled' && ready.value === true;
+  if (devices.status === 'fulfilled') state.devices = devices.value.devices;
+  if (networks.status === 'fulfilled') state.networks = networks.value.networks;
+  if (links.status === 'fulfilled') state.links = links.value.links;
+  if (state.view === 'network' && state.networkId) {
+    try {
+      state.detail = await call('GET', '/api/networks/' + state.networkId);
+    } catch (err) {
+      if (String(err.message).includes('404')) {
+        state.view = 'networks';
+        state.networkId = null;
+        state.detail = null;
+        setMsg('网络已不存在（可能已被删除），已返回网络列表', 'err');
+      }
+    }
+  }
+  renderReady();
+  setMeta();
+  render();
+}
+
+function renderReady() {
+  $('#ready').innerHTML =
+    `<span class="dot ${state.ready ? 'on' : ''}"></span>管理 API ${state.ready ? '在线' : '离线'}`;
+}
+
+// ---------- 渲染 ----------
+
+// 数据签名不变就不重绘：自动刷新不打断正在填写的表单。
+function render(force) {
+  const signature = JSON.stringify(
+    [state.view, state.networkId, state.devices, state.networks, state.links, state.detail]);
+  if (!force && signature === lastSignature) return;
+  lastSignature = signature;
+
+  $('#count-devices').textContent = state.devices.length;
+  $('#count-networks').textContent = state.networks.length;
+  $('#count-links').textContent = state.links.length;
+  document.querySelectorAll('#sidebar button').forEach(btn =>
+    btn.classList.toggle('active', btn.dataset.view === state.view));
+
+  const views = {
+    devices: renderDevices,
+    networks: renderNetworks,
+    network: renderNetwork,
+    links: renderLinks,
+  };
+  $('#main').innerHTML = views[state.view]();
+}
+
+const table = (cols, rows) =>
+  `<table><thead><tr>${cols.map(c => `<th>${c}</th>`).join('')}</tr></thead>` +
+  `<tbody>${rows || `<tr><td class="empty" colspan="${cols.length}">0 行</td></tr>`}</tbody></table>`;
+
+function renderDevices() {
+  const rows = state.devices.map((d, i) => `
+    <tr>
+      <td class="num">${i + 1}</td>
+      <td class="mono" title="${esc(d.device_id)}">${esc(shortId(d.device_id, 13))}</td>
+      <td>${esc(d.name)}</td>
+      <td class="mono">${esc(d.platform)}</td>
+      <td>${onlineDot(d.online)}${d.online ? '在线' : '离线'}</td>
+      <td class="mono">${d.network_id ? esc(d.network_id) : '<span class="hint">—</span>'}</td>
+      <td class="ops">
+        <button class="btn" data-action="query" data-id="${esc(d.device_id)}"
+          ${d.online ? 'title="下发 QUERY，设备随后上报链路状态"' : 'disabled title="设备离线：QUERY 只发给在线设备"'}>查询</button>
+        <button class="btn warn" data-action="del-device" data-id="${esc(d.device_id)}"
+          title="需先停止其客户端并移出网络">删除</button>
+      </td>
+    </tr>`).join('');
+  return `
+    <section>
+      <div class="viewbar">
+        <span class="hint">已注册设备列表。在线状态实时取自会话表，所属网络取自成员表，其余字段来自设备注册信息。</span>
+      </div>
+      ${table(['#', '设备 ID', '名称', '平台', '在线', '所属网络', '操作'], rows)}
+    </section>`;
+}
+
+function renderNetworks() {
+  const rows = state.networks.map((n, i) => `
+    <tr>
+      <td class="num">${i + 1}</td>
+      <td class="mono">${esc(n.id)}</td>
+      <td>${esc(n.name)}</td>
+      <td class="mono">${esc(n.cidr)}</td>
+      <td class="mono">${n.member_count}</td>
+      <td class="mono">${esc(fmtDT(n.created_at))}</td>
+      <td class="ops">
+        <button class="btn" data-action="open-network" data-id="${esc(n.id)}">打开</button>
+        <button class="btn warn" data-action="del-network" data-id="${esc(n.id)}" data-name="${esc(n.name)}"
+          title="成员与配对级联删除">删除</button>
+      </td>
+    </tr>`).join('');
+  return `
+    <section>
+      <div class="viewbar">
+        <span class="hint">全部网络与成员数。建网时填名称与 CIDR，ID 由服务器生成，成员数随加入设备动态变化。</span>
+      </div>
+      <form class="bar" data-form="create-network">
+        <input name="name" placeholder="名称，如 office" required maxlength="128">
+        <input name="cidr" placeholder="CIDR，如 10.10.0.0/24" required>
+        <button class="btn">建网</button>
+      </form>
+      ${table(['#', '网络 ID', '名称', '网段', '成员数', '创建时间', '操作'], rows)}
+    </section>`;
+}
+
+function renderNetwork() {
+  const d = state.detail;
+  if (!d) return '';
+  const network = d.network;
+
+  const memberRows = (d.members || []).map((m, i) => `
+    <tr>
+      <td class="num">${i + 1}</td>
+      <td class="mono" title="${esc(m.device_id)}">${esc(shortId(m.device_id, 13))}</td>
+      <td>${esc(m.device_name)}</td>
+      <td class="mono">${esc(m.virtual_ip)}</td>
+      <td class="mono">${esc(fmtDT(m.joined_at))}</td>
+      <td class="ops">
+        <button class="btn warn" data-action="remove-member" data-network="${esc(network.id)}"
+          data-device="${esc(m.device_id)}" data-name="${esc(m.device_name)}"
+          title="其配对级联删除，剩余成员收到新配置">移出</button>
+      </td>
+    </tr>`).join('');
+
+  const peeringRows = (d.peerings || []).map((p, i) => `
+    <tr>
+      <td class="num">${i + 1}</td>
+      <td class="mono" title="${esc(p.peering_id)}">${esc(shortId(p.peering_id, 8))}</td>
+      <td>${esc(p.name_a)} <span class="mono hint">${esc(p.virtual_ip_a)}</span></td>
+      <td>${esc(p.name_b)} <span class="mono hint">${esc(p.virtual_ip_b)}</span></td>
+      <td class="mono">${esc(fmtDT(p.created_at))}</td>
+      <td class="ops">
+        <button class="btn warn" data-action="del-peering" data-network="${esc(network.id)}"
+          data-peering="${esc(p.peering_id)}">删除</button>
+      </td>
+    </tr>`).join('');
+
+  const candidates = state.devices.filter(v => !v.network_id);
+  const memberOptions = (selected) => (d.members || []).map(m =>
+    `<option value="${esc(m.device_id)}" ${m.device_id === selected ? 'selected' : ''}>` +
+    `${esc(m.device_name)} · ${esc(m.virtual_ip)}</option>`).join('');
+
+  return `
+    <div class="crumb">
+      <button class="btn" data-action="back-networks">« 返回网络列表</button>
+      <span class="title">${esc(network.name)}</span>
+      <span class="mono hint">${esc(network.id)} · ${esc(network.cidr)}</span>
+    </div>
+
+    <section>
+      <div class="viewbar">
+        <span class="hint">网络成员列表。加入时服务器在 CIDR 内自动分配第一个空闲虚拟 IP；一台设备同时只能属于一个网络。</span>
+      </div>
+      <form class="bar" data-form="add-member">
+        <select name="device_id" required ${candidates.length ? '' : 'disabled'}>
+          <option value="">选择未入网设备…</option>
+          ${candidates.map(v =>
+            `<option value="${esc(v.device_id)}">${esc(v.name)} · ${esc(v.platform)} · ${esc(shortId(v.device_id, 8))}</option>`).join('')}
+          ${candidates.length ? '' : '<option value="">（没有可加入的设备：要么全部已在网，要么尚未注册）</option>'}
+        </select>
+        <button class="btn" ${candidates.length ? '' : 'disabled'}>加入成员</button>
+      </form>
+      ${table(['#', '设备 ID', '设备名称', '虚拟 IP', '加入时间', '操作'], memberRows)}
+    </section>
+
+    <section>
+      <div class="viewbar">
+        <span class="hint">设备配对列表。配对是建链/断链操作的作用对象，双方必须已是本网络成员。选两台设备建立配对后，才能在链路视图下发建链。</span>
+      </div>
+      <form class="bar" data-form="create-peering">
+        <select name="a" required ${(d.members || []).length >= 2 ? '' : 'disabled'}>${memberOptions()}</select>
+        <span class="mono hint">↔</span>
+        <select name="b" required ${(d.members || []).length >= 2 ? '' : 'disabled'}>${memberOptions()}</select>
+        <button class="btn" ${(d.members || []).length >= 2 ? '' : 'disabled'}>建配对</button>
+      </form>
+      ${table(['#', '配对 ID', '设备 A', '设备 B', '创建时间', '操作'], peeringRows)}
+    </section>`;
+}
+
+function renderLinks() {
+  const rows = state.links.map((l, i) => `
+    <tr>
+      <td class="num">${i + 1}</td>
+      <td class="mono">${esc(l.network_id)}</td>
+      <td>${onlineDot(l.online_a)}${esc(l.name_a)} <span class="mono hint">${esc(shortId(l.device_a, 8))}</span></td>
+      <td>${onlineDot(l.online_b)}${esc(l.name_b)} <span class="mono hint">${esc(shortId(l.device_b, 8))}</span></td>
+      <td><span class="chip ${esc(l.state.toLowerCase())}">${esc(l.state)}</span>${l.last_reason ? `<div class="fail-reason" title="上次尝试的失败原因：${esc(l.last_reason)}">${esc(reasonText[l.last_reason] || l.last_reason)}</div>` : ''}</td>
+      <td class="mono">${l.token ? esc(l.token) : '<span class="hint">—</span>'}</td>
+      <td class="mono" title="${esc(l.updated_at)}">${isZeroTime(l.updated_at)
+        ? '<span class="hint">—</span>'
+        : `${esc(fmtDT(l.updated_at))} <span class="hint">（${esc(fmtAgo(l.updated_at))}）</span>`}</td>
+      <td class="ops">
+        <button class="btn" data-action="connect" data-a="${esc(l.device_a)}" data-b="${esc(l.device_b)}"
+          ${l.state === 'CONNECTED'
+            ? 'disabled title="已连接；重建请先断链"'
+            : l.online_a && l.online_b ? '' : 'disabled title="双方在线才可下发"'}>建链</button>
+        <button class="btn warn" data-action="disconnect" data-a="${esc(l.device_a)}" data-b="${esc(l.device_b)}"
+          ${l.online_a && l.online_b ? '' : 'disabled title="双方在线才可下发"'}>断链</button>
+      </td>
+    </tr>`).join('');
+  return `
+    <section>
+      <div class="viewbar">
+        <span class="hint">链路状态视图（内存，重启清空）。在线状态实时；链路状态与时间戳是设备最后上报的已知值（缓存），对本页设备点「查询」可触发其实时上报刷新。</span>
+      </div>
+      ${table(['#', '网络', '设备 A', '设备 B', '状态', '令牌', '更新时间', '操作'], rows)}
+    </section>`;
+}
+
+// ---------- 事件 ----------
+
+document.querySelectorAll('#sidebar button').forEach(btn =>
+  btn.addEventListener('click', () => {
+    state.view = btn.dataset.view;
+    if (state.view !== 'network') state.networkId = null;
+    lastSignature = '';
+    refresh();
+  }));
+$('#refresh-now').addEventListener('click', refresh);
+setInterval(() => {
+  if ($('#autorefresh').checked && !document.hidden) refresh();
+}, 5000);
+
+$('#main').addEventListener('click', async e => {
+  const btn = e.target.closest('[data-action]');
+  if (!btn || btn.disabled) return;
+  const d = btn.dataset;
+  try {
+    switch (d.action) {
+      case 'query': {
+        await call('POST', `/api/devices/${d.id}/query`);
+        setMsg(`QUERY 已下发，设备将随后上报；结果体现在链路视图`, 'ok');
+        refresh();
+        setTimeout(refresh, 1500);
+        break;
+      }
+      case 'del-device': {
+        if (!confirm(`删除设备 ${d.id} ？\n（须先停止其客户端，且已移出网络）`)) return;
+        await call('DELETE', `/api/devices/${d.id}`);
+        setMsg('设备已删除', 'ok');
+        refresh();
+        break;
+      }
+      case 'open-network':
+        state.view = 'network';
+        state.networkId = d.id;
+        lastSignature = '';
+        refresh();
+        break;
+      case 'back-networks':
+        state.view = 'networks';
+        state.networkId = null;
+        state.detail = null;
+        lastSignature = '';
+        render();
+        break;
+      case 'del-network': {
+        if (!confirm(`删除网络 ${d.name}（${d.id}）？\n成员与配对将级联删除，在线成员收到空配置。`)) return;
+        await call('DELETE', `/api/networks/${d.id}`);
+        state.networkId = null;
+        state.detail = null;
+        state.view = 'networks';
+        setMsg('网络已删除', 'ok');
+        refresh();
+        break;
+      }
+      case 'remove-member': {
+        if (!confirm(`把 ${d.name} 移出网络？\n其配对将被删除。`)) return;
+        await call('DELETE', `/api/networks/${d.network}/members/${d.device}`);
+        setMsg('成员已移出', 'ok');
+        refresh();
+        break;
+      }
+      case 'del-peering': {
+        if (!confirm(`删除配对 ${shortId(d.peering, 8)} ？`)) return;
+        await call('DELETE', `/api/networks/${d.network}/peerings/${d.peering}`);
+        setMsg('配对已删除', 'ok');
+        refresh();
+        break;
+      }
+      case 'connect': {
+        await call('POST', '/api/links/connect', { device_a: d.a, device_b: d.b });
+        setMsg('CONNECT 已下发', 'ok');
+        refresh();
+        break;
+      }
+      case 'disconnect': {
+        await call('POST', '/api/links/disconnect', { device_a: d.a, device_b: d.b });
+        setMsg('DISCONNECT 已下发', 'ok');
+        refresh();
+        break;
+      }
+    }
+  } catch (err) {
+    setMsg(String(err.message || err), 'err');
+  }
+});
+
+$('#main').addEventListener('submit', async e => {
+  const form = e.target.closest('form[data-form]');
+  if (!form) return;
+  e.preventDefault();
+  const fd = new FormData(form);
+  try {
+    switch (form.dataset.form) {
+      case 'create-network': {
+        const created = await call('POST', '/api/networks',
+          { name: fd.get('name').trim(), cidr: fd.get('cidr').trim() });
+        setMsg(`网络已创建：${created.id}（${created.cidr}）`, 'ok');
+        break;
+      }
+      case 'add-member': {
+        const device = fd.get('device_id');
+        if (!device) return;
+        await call('POST', `/api/networks/${state.networkId}/members`, { device_id: device });
+        setMsg('成员已加入', 'ok');
+        break;
+      }
+      case 'create-peering': {
+        const a = fd.get('a'), b = fd.get('b');
+        if (!a || !b || a === b) { setMsg('请选择两台不同设备', 'err'); return; }
+        const created = await call('POST', `/api/networks/${state.networkId}/peerings`,
+          { device_a: a, device_b: b });
+        setMsg(`配对已创建：${created.peering_id}`, 'ok');
+        break;
+      }
+    }
+    refresh();
+  } catch (err) {
+    setMsg(String(err.message || err), 'err');
+  }
+});
+
+// ---------- 启动 ----------
+
+refresh();
+</script>
+</body>
+</html>

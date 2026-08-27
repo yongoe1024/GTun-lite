@@ -1,0 +1,64 @@
+# 真机测试
+
+本项目**不使用 Docker**：TUN 设备、路由表与 NAT 行为是验收对象本身，
+容器会引入另一层网络栈与权限边界，真机直测才是被测事实。单元与协议
+级测试在 `internal/` 各包内（`make check`），这里只放需要真机的端到端脚本。
+
+新机器的一次性环境设置（ssh、免密、提权、端口规划）见
+[ENVIRONMENT.md](ENVIRONMENT.md)；本文是操作经验与工具坑。
+
+## 脚本
+
+| 脚本 | 拓扑 | 校验项 |
+|---|---|---|
+| `real-lan.sh <本机LAN_IP> <debian_ssh>` | 本机做服务端 + 本机/Debian 双客户端（同网段，无 NAT） | 双侧 punch connected、双向 ping 零丢、双向 8MB MD5、保活 70s |
+| `real-wan.sh <公网ssh> [端口基值] [身份种子]` | 公网服务器做服务端（兼第二客户端），本机穿真实 NAT 打过去 | 双侧 punch connected、双向 ping 零丢、2MB MD5（CONNECT 自动重试，容忍出口 IP 轮换） |
+
+两脚本任一校验失败即非零退出；需要本机免密 sudo、两台 ssh 目标免密 root。
+
+## 真机测试的既知环境事实（踩坑记录）
+
+- **传输测试的发送端用 python3，不要用 nc**：macOS/BSD nc 的 stdin 一到
+  EOF（脚本里通常是 /dev/null）就向对端发 FIN，Debian 的 nc 把它当结束
+  信号——大文件传输会假性卡在 8192 字节。这是工具陷阱，不是隧道缺陷。
+- **家庭宽带可能按流轮换出口 IP**（实测同一 socket 的五个探测包从两个
+  公网 IP 交替出去）：客户端以 PROBE_IP_CHANGED 如实拒绝，打洞成功率
+  随之波动，属环境特性；判定代码是否有问题看双侧 punch connected 日志。
+- **同一家庭路由器后的两台设备互打需要 hairpin**，家用路由器多不支持——
+  该场景如实 PUNCH_TIMEOUT，不代表打洞代码有缺陷，跨 NAT 侧验证为准。
+- **手机热点是可靠的 variable NAT 源**（蜂窝出口为对称型）；link 角色
+  每轮随身份随机，覆盖两个分支需多轮或预写身份强制角色（方法见
+  `设计文档/09-测试清单.md` 开头的方法论节）。
+- ssh 远端后台进程用 `(setsid nohup ... > log 2>&1 < /dev/null &)`；
+  远端清理用 `pkill -x` 精确进程名（`-f` 会匹配到 ssh 命令行自身）。
+- macOS 本机（脚本侧）没有普通用户 `setsid`：普通用户命令会随会话结束被
+  带走（症状是本机服务器"神秘 shutting down"）。用 sudo 起进程可借独立
+  进程组存活（本仓库脚本的做法），或 python 双 fork + `os.setsid()`。
+
+## 故障注入工具箱（复现 checklist 的 A3/B4/C6/D3/D4/E4 类手测）
+
+- macOS 丢包/黑洞（pf）：`echo "block in proto udp to any port 10002" | sudo pfctl -Ef -`，
+  结束 `sudo pfctl -d`。启用前先 `sudo pfctl -F all` 清旧规则，否则历史
+  规则一并生效（真机踩过）。
+- Linux 丢包（iptables）：`iptables -A INPUT -p udp --dport <port> -j DROP`，
+  复原 `-D` 同规则。
+- 强杀已建立的 TCP（Debian）：`ss -K dst <ip> dport = :22`——**过滤器必须
+  带 dport**，裸 `dst <ip>` 会连带杀掉自己的 ssh 会话（真机踩过）。
+
+## Windows 真机操作经验（2026-08-27 沉淀，Win11 build 26200）
+
+- **sshd 会话结束会杀掉子进程**（`Start-Process` 也逃不掉）：长驻进程用
+  计划任务分离——`schtasks /Create /TN x /TR <run.cmd> /SC ONCE /RL HIGHEST`
+  再 `/Run`。**`/RL HIGHEST` 不能省**：省了进程无提权，WintunCreateAdapter
+  报 Access denied（ssh 的提权靠事先设过 LocalAccountTokenFilterPolicy=1）。
+- run.cmd 显式重定向日志（客户端日志走 stderr）：
+  `gtun-client.exe -config <绝对路径> > client.log 2> client.err`。
+- cmd 输出是 GBK（中文显示乱码）：判定用英文锚点，或改用
+  PowerShell `Select-String`/`Get-Content`。
+- 工具替代：nc/md5sum 没有——传输用系统自带 `curl.exe`（下载或 `-T` 上传），
+  哈希用 `Get-FileHash -Algorithm MD5`；随机数据用 PowerShell
+  `RandomNumberGenerator`。Windows ping 的零丢判定锚定 `(0% loss)`。
+- 强杀（`taskkill /F`，模拟崩溃）后对端 /32 路由悬空残留：重启客户端
+  preflight 如实报 ROUTE_CONFLICT，`route delete <ip>` 清理后即恢复。
+- Windows 自身 mDNS（224.0.0.251）会渗入 gtun，数据面按「未注册对端」
+  丢弃（Debug 日志可见），属正常防护，无需处理。

@@ -1,0 +1,17 @@
+# 默认忽略的文件
+.idea
+.DS_Store
+
+# 构建产物
+/bin/
+
+# 运行时产物
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+gtun-device-id
+*.log
+
+# ZCode 会话状态
+.zcode

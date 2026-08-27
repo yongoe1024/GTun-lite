@@ -1,0 +1,29 @@
+# GTun-Lite 客户端配置。本机虚拟 IP 由服务器下发，不在此配置。
+server:
+  addr: "127.0.0.1:10000"      # 服务器控制面地址（必填：唯一没有默认值的键）
+  probe_base_port: 10000       # 探测端口段起点（与服务端 probe.base_port 一致）
+identity:
+  path: "gtun-device-id"       # 设备身份文件；不存在则首启生成
+  # name 默认取主机名
+tun:
+  name: "gtun0"                # macOS 实际为 utunN，此名仅日志前缀
+  mtu: 1280                    # 上限 1456 = 1500 - 44（IPv4+UDP+GTUN 外层开销）
+tunnel:
+  outbound_queue: 1024         # 每链路出站队列包数
+  inbound_queue: 1024          # 全局入站队列包数
+control:
+  heartbeat_interval: 20s      # 须明显小于服务端 heartbeat_timeout（默认 60s）
+  register_timeout: 10s        # 等待注册确认的时长
+  connect_timeout: 10s         # TCP 拨号超时
+  reconnect_interval: 5s       # 固定间隔，无指数退避
+  write_timeout: 5s            # 单条上行消息写超时
+probe:
+  timeout: 30s                 # 五端口画像总预算
+  per_port_timeout: 1s          # 1s×4次×5端口=20s，装得进 30s 总预算
+  retries: 3                   # 每端口重试次数（含首次共 4 发）
+punch:
+  stable_timeout: 5s           # stable-stable 直连预算（成功仅需 2~3 个 RTT）
+  variable_timeout: 15s        # 涉 variable（Range+helper）预算
+  helper_count: 256            # 256 / 512 / 1024 三档，其他值拒绝启动
+logging:
+  level: "info"                # debug/info/warn/error；打洞排障开 debug
