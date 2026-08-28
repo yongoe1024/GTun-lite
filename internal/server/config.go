@@ -53,6 +53,11 @@ type ServerConfig struct {
 	} `yaml:"limits"`
 	Logging struct {
 		Level string `yaml:"level"`
+		// File 与 ErrorFile 是可选的日志落盘路径：普通日志（info 及以下）
+		// 与错误日志（warn 及以上）分文件追加写，服务化部署不依赖启动器
+		// 重定向。留空维持 stderr。
+		File      string `yaml:"file"`
+		ErrorFile string `yaml:"error_file"`
 	} `yaml:"logging"`
 }
 
@@ -125,6 +130,9 @@ func (config *ServerConfig) applyDefaults() {
 
 // validate 拒绝自相矛盾的取值。
 func (config ServerConfig) validate() error {
+	if config.Logging.File != "" && config.Logging.File == config.Logging.ErrorFile {
+		return errors.New("logging.file and logging.error_file must differ")
+	}
 	if config.Control.RegisterTimeout <= 0 || config.Control.HeartbeatTimeout <= 0 || config.Control.WriteTimeout <= 0 {
 		return errors.New("control timeouts must be positive")
 	}

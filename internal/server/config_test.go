@@ -87,3 +87,20 @@ func TestLoadServerConfigAcceptsTightBoundary(t *testing.T) {
 		t.Fatalf("boundary combination must load: %v", err)
 	}
 }
+
+// TestLoadServerConfigLoggingPaths 日志双文件路径校验：相同路径拒绝。
+func TestLoadServerConfigLoggingPaths(t *testing.T) {
+	path := writeServerConfig(t, "")
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content = append(content, []byte("logging:\n  file: a.log\n  error_file: a.log\n")...)
+	conflictPath := filepath.Join(t.TempDir(), "conflict.yaml")
+	if err := os.WriteFile(conflictPath, content, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadServerConfig(conflictPath); err == nil {
+		t.Fatal("identical log paths must be rejected")
+	}
+}

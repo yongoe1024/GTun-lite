@@ -5,12 +5,12 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
 
 	"gtun-lite/internal/client"
+	"gtun-lite/internal/logging"
 	"gtun-lite/internal/tun"
 )
 
@@ -36,7 +36,16 @@ func run() int {
 		fmt.Fprintf(os.Stderr, "gtun-lite client: %v\n", err)
 		return 1
 	}
-	log := newLogger(config.Logging.Level)
+	log, closeLogs, err := logging.New(logging.Options{
+		Level:     config.Logging.Level,
+		File:      config.Logging.File,
+		ErrorFile: config.Logging.ErrorFile,
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "gtun-lite client: %v\n", err)
+		return 1
+	}
+	defer closeLogs()
 
 	// 运行的第一个动作：fd 预算自举——不够先抬高软上限（无特权要求），
 	// 抬完仍装不下「helper 档位 + 冗余」则禁止启动。把决定权留给运维：
@@ -69,20 +78,4 @@ func run() int {
 	}
 	log.Info("gtun-lite client stopped")
 	return 0
-}
-
-// newLogger 按配置级别构造结构化日志。
-func newLogger(level string) *slog.Logger {
-	var value slog.Level
-	switch level {
-	case "debug":
-		value = slog.LevelDebug
-	case "warn":
-		value = slog.LevelWarn
-	case "error":
-		value = slog.LevelError
-	default:
-		value = slog.LevelInfo
-	}
-	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: value}))
 }

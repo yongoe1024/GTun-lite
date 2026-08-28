@@ -5,7 +5,6 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -13,6 +12,7 @@ import (
 	"syscall"
 
 	"gtun-lite/internal/common"
+	"gtun-lite/internal/logging"
 	"gtun-lite/internal/server"
 )
 
@@ -32,7 +32,16 @@ func run() int {
 		fmt.Fprintf(os.Stderr, "gtun-lite server: %v\n", err)
 		return 1
 	}
-	log := newLogger(config.Logging.Level)
+	log, closeLogs, err := logging.New(logging.Options{
+		Level:     config.Logging.Level,
+		File:      config.Logging.File,
+		ErrorFile: config.Logging.ErrorFile,
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "gtun-lite server: %v\n", err)
+		return 1
+	}
+	defer closeLogs()
 
 	store, err := server.OpenStore(context.Background(), config.Database.Path)
 	if err != nil {
@@ -121,20 +130,4 @@ func run() int {
 	}
 	<-serveDone
 	return 0
-}
-
-// newLogger 按配置级别构造结构化日志。
-func newLogger(level string) *slog.Logger {
-	var value slog.Level
-	switch level {
-	case "debug":
-		value = slog.LevelDebug
-	case "warn":
-		value = slog.LevelWarn
-	case "error":
-		value = slog.LevelError
-	default:
-		value = slog.LevelInfo
-	}
-	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: value}))
 }

@@ -73,6 +73,11 @@ type ClientConfig struct {
 	} `yaml:"punch"`
 	Logging struct {
 		Level string `yaml:"level"`
+		// File 与 ErrorFile 是可选的日志落盘路径：普通日志（info 及以下）
+		// 与错误日志（warn 及以上）分文件追加写，服务化部署（schtasks/
+		// systemd）不依赖启动器重定向。留空维持 stderr。
+		File      string `yaml:"file"`
+		ErrorFile string `yaml:"error_file"`
 	} `yaml:"logging"`
 }
 
@@ -169,6 +174,9 @@ func (config *ClientConfig) applyDefaults() {
 func (config ClientConfig) validate() error {
 	if config.Server.Addr == "" {
 		return errors.New("server.addr is required")
+	}
+	if config.Logging.File != "" && config.Logging.File == config.Logging.ErrorFile {
+		return errors.New("logging.file and logging.error_file must differ")
 	}
 	if config.Control.HeartbeatInterval <= 0 || config.Control.RegisterTimeout <= 0 ||
 		config.Control.ConnectTimeout <= 0 || config.Control.ReconnectInterval <= 0 || config.Control.WriteTimeout <= 0 {

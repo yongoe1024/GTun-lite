@@ -99,3 +99,14 @@ func TestLoadClientConfigMTUBounds(t *testing.T) {
 		t.Fatalf("default mtu rejected: %v", err)
 	}
 }
+
+// TestLoadClientConfigLoggingPaths 日志双文件路径校验：相同路径拒绝
+// （两个流写同一文件会交错，语义不清）。
+func TestLoadClientConfigLoggingPaths(t *testing.T) {
+	if _, err := LoadClientConfig(writeConfig(t, "logging:\n  file: a.log\n  error_file: a.log\n")); err == nil {
+		t.Fatal("identical log paths must be rejected")
+	}
+	if _, err := LoadClientConfig(writeConfig(t, "logging:\n  file: a.log\n  error_file: b.err\n")); err != nil {
+		t.Fatalf("distinct log paths must be accepted: %v", err)
+	}
+}
