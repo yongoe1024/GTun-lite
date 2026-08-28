@@ -83,6 +83,8 @@ func (opener *fakeOpener) Open(_ context.Context, _ string, _ int, _ common.IPv4
 // fakeRouteTable 报告一张空路由表：无默认网关、无 /32、无本机地址。
 type fakeRouteTable struct{}
 
-func (fakeRouteTable) DefaultGateway() (netip.Addr, bool, error) { return netip.Addr{}, false, nil }
-func (fakeRouteTable) LocalAddresses() ([]netip.Addr, error)     { return nil, nil }
-func (fakeRouteTable) HasHostRoute(netip.Addr) (bool, error)     { return false, nil }
+func (fakeRouteTable) DefaultGateway() (netip.Addr, bool, error)  { return netip.Addr{}, false, nil }
+func (fakeRouteTable) LocalAddresses() ([]netip.Addr, error)      { return nil, nil }
+func (fakeRouteTable) HasHostRoute(netip.Addr) (bool, error)      { return false, nil }
+func (fakeRouteTable) HostRouteDangling(netip.Addr) (bool, error) { return false, nil }
+func (fakeRouteTable) DeleteHostRoute(netip.Addr) error           { return nil }

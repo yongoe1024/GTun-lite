@@ -3,6 +3,7 @@ package tun
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/netip"
 
 	"gtun-lite/internal/common"
@@ -20,9 +21,10 @@ var (
 // 调用方不得发布配置或修改数据面。
 //
 // 不存在「GTun 自身路由」豁免：重应用幂等由 manager 的「拓扑未变不重建
-// + 重建前先拆干净」保证，preflight 执行时系统里不应有任何 GTun 路由——
-// 此刻存在的 /32 无论来源（其他 VPN、上次异常退出的残留）一律如实报
-// 冲突，清理责任交给运维，不静默接管。
+// + 重建前先拆干净」保证，preflight 执行时系统里不应有任何 GTun 路由。
+// 此刻存在的 /32 分两类：指向已消失接口的悬空残留由调用方先行自动清理
+// （见 CleanupDanglingHostRoutes，零歧义）；指向活跃接口的一律如实报
+// 冲突——可能是其他 VPN 的真实路由——清理责任交给运维，不静默接管。
 func Preflight(input PreflightInput, table RouteTable) error {
 	if err := input.LocalIP.Validate(); err != nil {
 		return ErrRouteConflict
@@ -57,6 +59,44 @@ func Preflight(input PreflightInput, table RouteTable) error {
 		}
 	}
 	return nil
+}
+
+// CleanupDanglingHostRoutes 清理 targets（本机与对端虚拟 IP）中指向
+// 已不存在接口的 /32 悬空路由。异常退出（崩溃/强杀/断电）会留下这种
+// 残留：绑定的接口已消失，归属零歧义，可安全自动删除。指向活跃接口
+// 的 /32 一律不动——那可能是其他 VPN 的真实路由，仍由 Preflight 如实
+// 报冲突、交运维处置。返回清理的条目数；单条清理失败只记日志不中断
+// （残留最终仍会被 Preflight 拦下）。
+func CleanupDanglingHostRoutes(input PreflightInput, table RouteTable, log *slog.Logger) int {
+	targets := append([]common.IPv4{input.LocalIP}, input.Peers...)
+	cleaned := 0
+	for _, target := range targets {
+		addr, err := netip.ParseAddr(string(target))
+		if err != nil || !addr.Is4() {
+			continue
+		}
+		dangling, err := table.HostRouteDangling(addr)
+		if err != nil {
+			if log != nil {
+				log.Warn("dangling host route check failed", "ip", addr.String(), "error", err.Error())
+			}
+			continue
+		}
+		if !dangling {
+			continue
+		}
+		if err := table.DeleteHostRoute(addr); err != nil {
+			if log != nil {
+				log.Warn("dangling host route cleanup failed", "ip", addr.String(), "error", err.Error())
+			}
+			continue
+		}
+		cleaned++
+		if log != nil {
+			log.Warn("dangling host route removed", "ip", addr.String(), "note", "leftover from an unclean exit")
+		}
+	}
+	return cleaned
 }
 
 // isReserved 拒绝回环、链路本地、多播、广播和未指定地址。

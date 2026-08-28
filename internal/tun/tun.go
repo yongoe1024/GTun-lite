@@ -77,7 +77,7 @@ type PreflightInput struct {
 	ServerIP common.IPv4
 }
 
-// RouteTable 抽象系统路由表读取，供 preflight 检查冲突。
+// RouteTable 抽象系统路由表的读取与残留清理，供 preflight 使用。
 // 查询结果按 Go netip.Addr 返回，平台实现用命令填充。
 type RouteTable interface {
 	// DefaultGateway 返回默认网关地址（无默认路由返回 false）。
@@ -86,4 +86,11 @@ type RouteTable interface {
 	LocalAddresses() ([]netip.Addr, error)
 	// HasHostRoute 返回指定 /32 主机路由是否已存在。
 	HasHostRoute(ip netip.Addr) (exists bool, err error)
+	// HostRouteDangling 报告 ip 的 /32 是否指向已不存在的接口——异常
+	// 退出（崩溃/强杀/断电）残留的零歧义特征。无此路由或无法判定
+	// （解析失败、信息不全）时一律返回 false，交由冲突检查如实报错。
+	HostRouteDangling(ip netip.Addr) (bool, error)
+	// DeleteHostRoute 删除 ip 的 /32 主机路由。仅用于清理悬空残留；
+	// 指向活跃接口的 /32 必须保留给 Preflight 如实报冲突。
+	DeleteHostRoute(ip netip.Addr) error
 }

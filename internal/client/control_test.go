@@ -127,9 +127,11 @@ func (opener *fakeOpener) takeDevices() []*fakeDevice {
 // fakeRouteTable 报告一张空路由表。
 type fakeRouteTable struct{}
 
-func (fakeRouteTable) DefaultGateway() (netip.Addr, bool, error) { return netip.Addr{}, false, nil }
-func (fakeRouteTable) LocalAddresses() ([]netip.Addr, error)     { return nil, nil }
-func (fakeRouteTable) HasHostRoute(netip.Addr) (bool, error)     { return false, nil }
+func (fakeRouteTable) DefaultGateway() (netip.Addr, bool, error)  { return netip.Addr{}, false, nil }
+func (fakeRouteTable) LocalAddresses() ([]netip.Addr, error)      { return nil, nil }
+func (fakeRouteTable) HasHostRoute(netip.Addr) (bool, error)      { return false, nil }
+func (fakeRouteTable) HostRouteDangling(netip.Addr) (bool, error) { return false, nil }
+func (fakeRouteTable) DeleteHostRoute(netip.Addr) error           { return nil }
 
 // ipv4Packet 构造带正确校验和的 20 字节头 IPv4 包（数据面出站校验要求）。
 func ipv4Packet(src, dst string, payload []byte) []byte {

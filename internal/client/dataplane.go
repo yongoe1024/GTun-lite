@@ -32,9 +32,12 @@ func openDataStack(opener tun.Opener, table tun.RouteTable, config ClientConfig,
 	for _, peer := range network.Peers {
 		peerIPs = append(peerIPs, peer.IP)
 	}
-	// preflight 在打开新 TUN 之前执行：上一栈关闭时已拆掉自己的路由，
-	// 此刻系统里若仍有 /32，那是上次异常退出的残留——如实报冲突，
-	// 让运维清理，不静默接管（幂等由「拓扑未变不重建」保证）。
+	// 先清理悬空残留：上一次异常退出（崩溃/强杀/断电）会留下指向已拆
+	// 接口的 /32，归属零歧义，自动清掉；指向活跃接口的 /32 不在此处
+	// 理，仍由 preflight 如实报冲突交运维。
+	tun.CleanupDanglingHostRoutes(tun.PreflightInput{
+		LocalIP: network.IP, Peers: peerIPs, ServerIP: serverIP,
+	}, table, log)
 	if err := tun.Preflight(tun.PreflightInput{
 		LocalIP: network.IP, Peers: peerIPs, ServerIP: serverIP,
 	}, table); err != nil {

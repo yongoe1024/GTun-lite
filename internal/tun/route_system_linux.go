@@ -3,6 +3,7 @@
 package tun
 
 import (
+	"net"
 	"net/netip"
 	"os/exec"
 	"strings"
@@ -32,4 +33,26 @@ func (systemRouteTable) HasHostRoute(ip netip.Addr) (bool, error) {
 		return false, err
 	}
 	return len(strings.TrimSpace(string(out))) > 0, nil
+}
+
+// HostRouteDangling 判定 /32 是否悬空：路由行的 dev 接口已不存在。
+// 输出里解析不到 dev（如 via 网关路由）时保守返回 false。
+func (systemRouteTable) HostRouteDangling(ip netip.Addr) (bool, error) {
+	out, err := exec.Command("ip", "route", "show", ip.String()+"/32").CombinedOutput()
+	if err != nil {
+		return false, err
+	}
+	fields := strings.Fields(string(out))
+	for i, f := range fields {
+		if f == "dev" && i+1 < len(fields) {
+			_, err := net.InterfaceByName(fields[i+1])
+			return err != nil, nil
+		}
+	}
+	return false, nil
+}
+
+// DeleteHostRoute 删除 /32 主机路由（与回滚同款命令）。
+func (systemRouteTable) DeleteHostRoute(ip netip.Addr) error {
+	return exec.Command("ip", "route", "del", ip.String()+"/32").Run()
 }
