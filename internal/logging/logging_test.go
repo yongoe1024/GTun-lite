@@ -75,8 +75,9 @@ func TestAppendMode(t *testing.T) {
 	}
 }
 
-// TestConsoleDualSink console=true 时记录同时进文件与 stderr。
-func TestConsoleDualSink(t *testing.T) {
+// TestFileConfigDualSink 配置了文件即「文件 + stderr」双写（默认行为，
+// 与启动方式无关）。
+func TestFileConfigDualSink(t *testing.T) {
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "gtun.log")
 	errPath := filepath.Join(dir, "gtun.err")
@@ -86,7 +87,7 @@ func TestConsoleDualSink(t *testing.T) {
 		t.Fatal(err)
 	}
 	os.Stderr = redirected
-	logger, closeLogs, err := New(Options{File: logPath, ErrorFile: errPath, Console: true})
+	logger, closeLogs, err := New(Options{File: logPath, ErrorFile: errPath})
 	logger.Info("dual-info")
 	logger.Error("dual-error")
 	closeLogs()

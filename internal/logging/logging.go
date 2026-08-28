@@ -21,10 +21,6 @@ type Options struct {
 	File string
 	// ErrorFile 是错误日志（warn 及以上）的追加写路径。
 	ErrorFile string
-	// Console 为 true 时所有记录在写文件之外同时输出到 stderr——
-	// 双击/交互场景「窗口实时看 + 文件可回查」两全；未配置文件的
-	// 流本就回落 stderr，不受影响。
-	Console bool
 }
 
 // New 构造 logger，返回的关闭函数释放打开的文件（进程退出前调用）。
@@ -46,10 +42,9 @@ func New(options Options) (*slog.Logger, func(), error) {
 			closeAll()
 			return nil, nil, fmt.Errorf("open log file: %w", err)
 		}
-		infoWriter = file
-		if options.Console {
-			infoWriter = io.MultiWriter(file, os.Stderr)
-		}
+		// 双写：文件 + stderr。窗口实时可看，文件可回查；后台部署
+		// （nohup >/dev/null 等）丢弃 stderr 即纯文件，互不干扰。
+		infoWriter = io.MultiWriter(file, os.Stderr)
 		closers = append(closers, func() { _ = file.Close() })
 	}
 	if options.ErrorFile != "" {
@@ -58,10 +53,7 @@ func New(options Options) (*slog.Logger, func(), error) {
 			closeAll()
 			return nil, nil, fmt.Errorf("open error log file: %w", err)
 		}
-		errWriter = file
-		if options.Console {
-			errWriter = io.MultiWriter(file, os.Stderr)
-		}
+		errWriter = io.MultiWriter(file, os.Stderr)
 		closers = append(closers, func() { _ = file.Close() })
 	}
 	handlerOptions := &slog.HandlerOptions{Level: level}

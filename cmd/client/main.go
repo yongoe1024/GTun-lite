@@ -40,7 +40,6 @@ func run() int {
 		Level:     config.Logging.Level,
 		File:      config.Logging.File,
 		ErrorFile: config.Logging.ErrorFile,
-		Console:   config.Logging.Console,
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "gtun-lite client: %v\n", err)
