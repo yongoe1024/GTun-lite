@@ -15,3 +15,4 @@ gtun-device-id
 
 # ZCode 会话状态
 .zcode
+*.err

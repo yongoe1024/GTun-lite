@@ -27,5 +27,5 @@ punch:
   helper_count: 256            # 256 / 512 / 1024 三档，其他值拒绝启动
 logging:
   level: "info"                # debug/info/warn/error；打洞排障开 debug
-  # file: "gtun-client.log"     # 可选：普通日志落盘（追加写）；schtasks/服务化部署建议开启
-  # error_file: "gtun-client.err"  # 可选：错误日志（warn 及以上）单独落盘；留空走 stderr
+  file: "gtun-client.log"      # 可选项：删去或留空即回落 stderr；随包默认开启，schtasks/服务化部署不依赖启动器重定向
+  error_file: "gtun-client.err" # 可选项：错误日志（warn 及以上）单独落盘

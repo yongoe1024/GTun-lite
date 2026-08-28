@@ -18,5 +18,5 @@ limits:
   max_cidr_prefix: 28          # 前缀上限；启动时校验设备上限装得进最小网段
 logging:
   level: "info"                # debug/info/warn/error；排障用 debug
-  # file: "gtun-server.log"     # 可选：普通日志落盘（追加写）；服务化部署建议开启
-  # error_file: "gtun-server.err"  # 可选：错误日志（warn 及以上）单独落盘；留空走 stderr
+  file: "gtun-server.log"      # 可选项：删去或留空即回落 stderr；随包默认开启，服务化部署不依赖启动器重定向
+  error_file: "gtun-server.err" # 可选项：错误日志（warn 及以上）单独落盘
