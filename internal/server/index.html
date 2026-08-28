@@ -411,8 +411,8 @@ function renderLinks() {
     <tr>
       <td class="num">${i + 1}</td>
       <td class="mono">${esc(l.network_id)}</td>
-      <td>${onlineDot(l.online_a)}${esc(l.name_a)} <span class="mono hint">${esc(shortId(l.device_a, 8))}</span></td>
-      <td>${onlineDot(l.online_b)}${esc(l.name_b)} <span class="mono hint">${esc(shortId(l.device_b, 8))}</span></td>
+      <td>${onlineDot(l.online_a)}${esc(l.name_a)} <span class="mono hint">${esc(shortId(l.device_a, 8))}</span><div class="mono hint">${esc(l.virtual_ip_a)}</div></td>
+      <td>${onlineDot(l.online_b)}${esc(l.name_b)} <span class="mono hint">${esc(shortId(l.device_b, 8))}</span><div class="mono hint">${esc(l.virtual_ip_b)}</div></td>
       <td><span class="chip ${esc(l.state.toLowerCase())}">${esc(l.state)}</span>${l.last_reason ? `<div class="fail-reason" title="上次尝试的失败原因：${esc(l.last_reason)}">${esc(reasonText[l.last_reason] || l.last_reason)}</div>` : ''}</td>
       <td class="mono">${l.token ? esc(l.token) : '<span class="hint">—</span>'}</td>
       <td class="mono" title="${esc(l.updated_at)}">${isZeroTime(l.updated_at)

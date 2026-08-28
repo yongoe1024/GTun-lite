@@ -662,9 +662,11 @@ type LinkView struct {
 	PeeringID  common.PeeringID `json:"peering_id"`
 	DeviceA    common.DeviceID  `json:"device_a"`
 	NameA      string           `json:"name_a"`
+	VirtualIPA common.IPv4      `json:"virtual_ip_a"`
 	OnlineA    bool             `json:"online_a"`
 	DeviceB    common.DeviceID  `json:"device_b"`
 	NameB      string           `json:"name_b"`
+	VirtualIPB common.IPv4      `json:"virtual_ip_b"`
 	OnlineB    bool             `json:"online_b"`
 	State      string           `json:"state"`
 	Token      string           `json:"token"`
@@ -717,11 +719,11 @@ func (owner *Hub) Snapshot(ctx context.Context) ([]DeviceView, []LinkView, error
 				// 读路径不建条目：没有内存记录的链路就是 IDLE（零值），
 				// GET /api/links 不得往状态表里写东西。
 				view := LinkView{
-					NetworkID: network.ID,
-					PeeringID: peering.PeeringID,
-					DeviceA:   pair[0], NameA: peering.NameA, OnlineA: onlineA,
-					DeviceB: pair[1], NameB: peering.NameB, OnlineB: onlineB,
-					State: LinkIdle.String(),
+					NetworkID:  network.ID,
+					PeeringID:  peering.PeeringID,
+					DeviceA:    pair[0], NameA: peering.NameA, VirtualIPA: peering.VirtualIPA, OnlineA: onlineA,
+					DeviceB:    pair[1], NameB: peering.NameB, VirtualIPB: peering.VirtualIPB, OnlineB: onlineB,
+					State:      LinkIdle.String(),
 				}
 				if record, exists := state.links[pair]; exists {
 					view.State = record.State.String()
