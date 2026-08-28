@@ -122,8 +122,8 @@
 
   <!-- 控制面流：服务器 ↔ B -->
   <text x="855" y="352" text-anchor="middle" font-size="10.5" fill="#1d4ed8">上行：注册 · 心跳 · 上报</text>
-  <line x1="794" y1="368" x2="916" y2="368" stroke="#2563eb" stroke-width="1.8" stroke-dasharray="7 4" marker-end="url(#mBlue)"/>
-  <line x1="918" y1="400" x2="792" y2="400" stroke="#2563eb" stroke-width="1.8" stroke-dasharray="7 4" marker-end="url(#mBlue)"/>
+  <line x1="916" y1="368" x2="794" y2="368" stroke="#2563eb" stroke-width="1.8" stroke-dasharray="7 4" marker-end="url(#mBlue)"/>
+  <line x1="792" y1="400" x2="916" y2="400" stroke="#2563eb" stroke-width="1.8" stroke-dasharray="7 4" marker-end="url(#mBlue)"/>
   <text x="855" y="418" text-anchor="middle" font-size="10.5" fill="#1d4ed8">下行：配置 · CONNECT</text>
 
   <!-- 探测流：A ↔ 服务器 -->
@@ -134,8 +134,8 @@
 
   <!-- 探测流：服务器 ↔ B -->
   <text x="855" y="502" text-anchor="middle" font-size="10.5" fill="#92400e">PROBE →（五端口）</text>
-  <line x1="794" y1="514" x2="916" y2="514" stroke="#d97706" stroke-width="1.8" stroke-dasharray="2 4" marker-end="url(#mAmber)"/>
-  <line x1="918" y1="530" x2="794" y2="530" stroke="#d97706" stroke-width="1.8" stroke-dasharray="2 4" marker-end="url(#mAmber)"/>
+  <line x1="916" y1="514" x2="794" y2="514" stroke="#d97706" stroke-width="1.8" stroke-dasharray="2 4" marker-end="url(#mAmber)"/>
+  <line x1="792" y1="530" x2="916" y2="530" stroke="#d97706" stroke-width="1.8" stroke-dasharray="2 4" marker-end="url(#mAmber)"/>
   <text x="855" y="548" text-anchor="middle" font-size="10.5" fill="#92400e">← PORT（回显公网地址）</text>
 
   <!-- ═══ 数据面：P2P 直连 ═══ -->
