@@ -123,6 +123,7 @@
 const state = {
   view: 'devices', networkId: null,
   devices: [], networks: [], links: [], detail: null,
+  autoRetry: false,
   ready: false,
 };
 let lastSignature = '';
@@ -229,7 +230,10 @@ async function refresh() {
   state.ready = ready.status === 'fulfilled' && ready.value === true;
   if (devices.status === 'fulfilled') state.devices = devices.value.devices;
   if (networks.status === 'fulfilled') state.networks = networks.value.networks;
-  if (links.status === 'fulfilled') state.links = links.value.links;
+  if (links.status === 'fulfilled') {
+    state.links = links.value.links;
+    state.autoRetry = links.value.auto_retry === true;
+  }
   if (state.view === 'network' && state.networkId) {
     try {
       state.detail = await call('GET', '/api/networks/' + state.networkId);
@@ -257,7 +261,7 @@ function renderReady() {
 // 数据签名不变就不重绘：自动刷新不打断正在填写的表单。
 function render(force) {
   const signature = JSON.stringify(
-    [state.view, state.networkId, state.devices, state.networks, state.links, state.detail]);
+    [state.view, state.networkId, state.devices, state.networks, state.links, state.detail, state.autoRetry]);
   if (!force && signature === lastSignature) return;
   lastSignature = signature;
 
@@ -432,6 +436,9 @@ function renderLinks() {
   return `
     <section>
       <div class="viewbar">
+        <label title="开启后每 5 秒遍历链路表，断开（IDLE）的自动重发建链，直到连接成功。注意：手动断链的链路也会被扫回，断链前请先关闭；新建配对的首次建链仍需手动下发。">
+          <input type="checkbox" id="auto-retry" ${state.autoRetry ? 'checked' : ''}> 失败自动重试（5s）
+        </label>
         <span class="hint">链路状态视图（内存，重启清空）。在线状态实时；链路状态与时间戳是设备最后上报的已知值（缓存），「刷新状态」向该行双方下发 QUERY，设备上报后本页随之更新。</span>
       </div>
       ${table(['#', '网络', '设备 A', '设备 B', '状态', '令牌', '更新时间', '操作'], rows)}
@@ -531,6 +538,17 @@ $('#main').addEventListener('click', async e => {
   } catch (err) {
     setMsg(String(err.message || err), 'err');
   }
+});
+
+$('#main').addEventListener('change', async e => {
+  if (e.target.id !== 'auto-retry') return;
+  try {
+    await call('POST', '/api/links/auto-retry', { enable: e.target.checked });
+    setMsg(e.target.checked ? '失败自动重试已开启：每 5 秒扫描断开的链路并重发建链' : '失败自动重试已关闭', 'ok');
+  } catch (err) {
+    setMsg(String(err.message || err), 'err');
+  }
+  refresh();
 });
 
 $('#main').addEventListener('submit', async e => {

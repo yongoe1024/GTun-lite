@@ -33,11 +33,14 @@ type AdminAPI struct {
 	store  *Store
 	config ServerConfig
 	log    *slog.Logger
+	retry  *AutoRetry
 }
 
-// NewAdminAPI 创建管理 API。
+// NewAdminAPI 创建管理 API，并启动链路自动重试循环（见 AutoRetry：
+// 开关默认关，循环空转的代价是每拍一次原子读）。
 func NewAdminAPI(owner *Hub, store *Store, config ServerConfig, log *slog.Logger) *AdminAPI {
-	return &AdminAPI{hub: owner, store: store, config: config, log: log}
+	api := &AdminAPI{hub: owner, store: store, config: config, log: log, retry: NewAutoRetry(owner, log)}
+	return api
 }
 
 // Routes 注册全部管理端点。
@@ -60,6 +63,7 @@ func (api *AdminAPI) Routes() *http.ServeMux {
 	mux.HandleFunc("GET /api/links", api.listLinks)
 	mux.HandleFunc("POST /api/links/connect", api.connectLink)
 	mux.HandleFunc("POST /api/links/disconnect", api.disconnectLink)
+	mux.HandleFunc("POST /api/links/auto-retry", api.setAutoRetry)
 	mux.HandleFunc("POST /api/devices/{device_id}/query", api.queryDevice)
 	return mux
 }
@@ -476,13 +480,33 @@ func (api *AdminAPI) deletePeering(writer http.ResponseWriter, request *http.Req
 }
 
 // listLinks 返回全部链路视图：在线性 + 最后已知状态 + 采集时刻。
+// auto_retry 一并带回，管理页刷新后开关状态不漂移。
 func (api *AdminAPI) listLinks(writer http.ResponseWriter, request *http.Request) {
 	_, links, err := api.hub.Snapshot(request.Context())
 	if err != nil {
 		writeError(writer, http.StatusInternalServerError, "internal_error", err.Error())
 		return
 	}
-	writeJSON(writer, http.StatusOK, map[string]any{"links": links})
+	writeJSON(writer, http.StatusOK, map[string]any{"links": links, "auto_retry": api.retry.Enabled()})
+}
+
+// setAutoRetry 开关「链路失败自动重试」全局循环（见 AutoRetry）。纯开关：
+// 开 = 每 AutoRetryInterval 遍历一次内存链路表，断开（IDLE）的重发
+// CONNECT；关 = 循环空转。语义与边界（手动断链会被扫回、重启归零）
+// 见 autoretry.go 顶部注释与管理页提示语。
+func (api *AdminAPI) setAutoRetry(writer http.ResponseWriter, request *http.Request) {
+	var input struct {
+		Enable bool `json:"enable"`
+	}
+	if !decodeBody(writer, request, &input) {
+		return
+	}
+	api.retry.Set(input.Enable)
+	status := "auto_retry_disabled"
+	if input.Enable {
+		status = "auto_retry_enabled"
+	}
+	writeJSON(writer, http.StatusAccepted, map[string]string{"status": status})
 }
 
 // linkPairInput 是链路操作请求体：两台设备即一条链路（设备对在库内

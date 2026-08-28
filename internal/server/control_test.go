@@ -26,6 +26,7 @@ type testServer struct {
 	control *ControlServer
 	admin   *httptest.Server
 	store   *Store
+	retry   *AutoRetry
 }
 
 // startTestServer 启动一台测试服务端，端口由内核分配。
@@ -57,14 +58,15 @@ func startTestServer(t *testing.T, adjust ...func(*ServerConfig)) *testServer {
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() { _ = control.Serve(ctx) }()
 
-	admin := httptest.NewServer(NewAdminAPI(owner, store, config, log).Routes())
+	adminAPI := NewAdminAPI(owner, store, config, log)
+	admin := httptest.NewServer(adminAPI.Routes())
 	t.Cleanup(func() {
 		cancel()
 		admin.Close()
 		owner.Close()
 		_ = store.Close()
 	})
-	return &testServer{hub: owner, control: control, admin: admin, store: store}
+	return &testServer{hub: owner, control: control, admin: admin, store: store, retry: adminAPI.retry}
 }
 
 // fakeClient 是协议级测试客户端：裸 TCP + JSON Lines，按需手工编造
