@@ -75,6 +75,35 @@ func TestAppendMode(t *testing.T) {
 	}
 }
 
+// TestConsoleDualSink console=true 时记录同时进文件与 stderr。
+func TestConsoleDualSink(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "gtun.log")
+	errPath := filepath.Join(dir, "gtun.err")
+	stderr := os.Stderr
+	redirected, err := os.CreateTemp(dir, "stderr")
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stderr = redirected
+	logger, closeLogs, err := New(Options{File: logPath, ErrorFile: errPath, Console: true})
+	logger.Info("dual-info")
+	logger.Error("dual-error")
+	closeLogs()
+	os.Stderr = stderr
+	_ = redirected.Close()
+
+	if body := readFile(t, logPath); !strings.Contains(body, "dual-info") || strings.Contains(body, "dual-error") {
+		t.Errorf("info file must hold info only: %q", body)
+	}
+	if body := readFile(t, errPath); !strings.Contains(body, "dual-error") || strings.Contains(body, "dual-info") {
+		t.Errorf("error file must hold error only: %q", body)
+	}
+	if body := readFile(t, redirected.Name()); !strings.Contains(body, "dual-info") || !strings.Contains(body, "dual-error") {
+		t.Errorf("stderr must mirror both records: %q", body)
+	}
+}
+
 // TestOpenFailureFailFast 路径打不开立即报错（fail-fast，拒启动）。
 func TestOpenFailureFailFast(t *testing.T) {
 	bad := filepath.Join(t.TempDir(), "missing-dir", "x.log")

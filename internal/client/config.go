@@ -80,6 +80,8 @@ type ClientConfig struct {
 		// systemd）不依赖启动器重定向。留空维持 stderr。
 		File      string `yaml:"file"`
 		ErrorFile string `yaml:"error_file"`
+		// Console 为 true 时所有记录同时输出到 stderr（窗口 + 文件双写）。
+		Console bool `yaml:"console"`
 	} `yaml:"logging"`
 }
 
