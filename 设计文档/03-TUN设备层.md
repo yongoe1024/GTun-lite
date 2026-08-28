@@ -87,7 +87,7 @@ type Opener interface {
 2. `CTLIOCGINFO` ioctl 按控制名 `com.apple.net.utunControl` 查 provider ID。
 3. `connect` 一个 `sockaddr_ctl` 指定 scUnit；**scUnit=N 对应接口 utun(N−1)**。
 4. **unit 选择策略**：`ifconfig -l` 枚举现有 utun，从「最大编号 + 2」开始尝试。原因：configd 残留的「壳接口」若被直接连上，会复活壳 ifnet，数据面全静默。
-5. fd 先 `SetNonblock(true)` 再 `os.NewFile`（见 §4.4 教训）。
+5. fd 先 `SetNonblock(true)` 再 `os.NewFile`（见 4.4 节教训）。
 6. 配置本机地址与 MTU（ifconfig 点对点形式，本机 IP 同时作 dst）。
 7. 装对端 /32 主机路由。
 
