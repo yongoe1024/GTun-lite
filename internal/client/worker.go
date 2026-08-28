@@ -561,7 +561,7 @@ func (worker *linkWorker) handlePunch(event wireEvent, isLink0 bool) {
 	// 这一发就是预测命中。必须先查后记——下面的登记会让本次查询恒真。
 	guessed := worker.punchSentFrom(receiving, event.source)
 	worker.notePredictionHit(receiving, event.source, "punch")
-	scanInboundOnce(event.source.Port, guessed)
+	scanInboundOnce(worker.token, event.source.Port, guessed)
 	worker.recordPunchSent(receiving, event.source, punchSentRecord{sentAt: time.Now()})
 	ack := common.P2PControl{Type: common.P2PTypePunchACK, Token: worker.token, TargetSocketID: event.control.SenderSocketID, SenderSocketID: receiving}
 	if encoded, err := common.MarshalP2PControl(ack); err == nil {
@@ -676,7 +676,7 @@ func (worker *linkWorker) pruneHelpers(keep *net.UDPConn) {
 	}
 	if len(dropped) > 0 {
 		worker.log.Info("helpers pruned to selected path", "closed", len(dropped))
-		scanNote("helpers pruned", "closed", len(dropped))
+		scanNote(worker.token, "helpers pruned", "closed", len(dropped))
 	}
 }
 
@@ -765,7 +765,7 @@ func (worker *linkWorker) rangeScan(peer common.NATProfile, deadline time.Time) 
 	rng := newScanRng()
 	global := 0
 	defer worker.scanEnd(&global)
-	scanNote("scan start", "peer_ip", string(peer.PublicIP), "last_port", int(lastPort),
+	scanNote(worker.token, "scan start", "peer_ip", string(peer.PublicIP), "last_port", int(lastPort),
 		"helper_count", helperCount, "stride", helperCount/4,
 		"budget", time.Until(deadline).Round(time.Millisecond).String())
 	for !worker.senderExited(deadline) {
@@ -776,21 +776,21 @@ func (worker *linkWorker) rangeScan(peer common.NATProfile, deadline time.Time) 
 			if !ok {
 				// 整个端口空间已发完（15s 预算 @3ms 发不到 64512 个候选，
 				// 实际到不了这里）：重建流重扫，等价旧行为的循环重发。
-				scanNote("scan stream exhausted, restarting", "sent", global)
+				scanNote(worker.token, "scan stream exhausted, restarting", "sent", global)
 				break
 			}
 			if worker.senderExited(deadline) {
 				return
 			}
 			if candidate.Stage != lastStage {
-				scanNote("stage begin", "stage", candidate.Stage.String(),
+				scanNote(worker.token, "stage begin", "stage", candidate.Stage.String(),
 					"candidates", stream.stageCount(candidate.Stage))
 				lastStage = candidate.Stage
 			}
 			global++
 			target := &net.UDPAddr{IP: ip, Port: candidate.Port}
 			worker.sendScanPunch(worker.mainSocketRef(), worker.mainSocketID, target, candidate, global)
-			scanNote("candidate sent", "stage", candidate.Stage.String(),
+			scanNote(worker.token, "candidate sent", "stage", candidate.Stage.String(),
 				"ordinal", candidate.Ordinal, "global", global, "port", candidate.Port)
 			if worker.waitSendInterval(punchPollInterval) {
 				return
@@ -807,7 +807,7 @@ func (worker *linkWorker) scanEnd(sent *int) {
 	} else if worker.ctx.Err() != nil {
 		reason = "cancelled"
 	}
-	scanNote("scan end", "reason", reason, "sent", *sent)
+	scanNote(worker.token, "scan end", "reason", reason, "sent", *sent)
 }
 
 // pollHelpers 让 helper 池按全局 3ms 间隔轮流向对端 stable 端点发 PUNCH。
@@ -928,8 +928,16 @@ func (worker *linkWorker) sendScanPunch(socket *net.UDPConn, id common.SocketID,
 	})
 }
 
-// sendPunchRecorded 编码发送并登记。
+// sendPunchRecorded 编码发送并登记。nil 判守：发送循环逐发取 socket 引用
+// 与 finish 摘除 socket 之间存在竞态——own 的预算定时器和发送循环的
+// senderExited 在同一 deadline 对齐，own 先返回触发 finish 把 mainSocket
+// 置 nil，发送循环恰好刚通过检查正要发包时取到 nil，对 nil 调
+// WriteToUDP 会 panic（尝试收尾路径上的崩溃，此前疑似三次客户端无声
+// 退出的来源）。ctx 已被 finish 取消，弃发后发送循环下轮即退出。
 func (worker *linkWorker) sendPunchRecorded(socket *net.UDPConn, id common.SocketID, target *net.UDPAddr, record punchSentRecord) {
+	if socket == nil {
+		return
+	}
 	punch := common.P2PControl{Type: common.P2PTypePunch, Token: worker.token, SenderSocketID: id}
 	if encoded, err := common.MarshalP2PControl(punch); err == nil {
 		_, _ = socket.WriteToUDP(encoded, target)
@@ -1113,7 +1121,7 @@ func (worker *linkWorker) notePredictionHit(id common.SocketID, source *net.UDPA
 	if !ok || record.stage == 0 {
 		return
 	}
-	scanHit(record.stage, record.ordinal, source.Port, time.Since(record.sentAt))
+	scanHit(worker.token, record.stage, record.ordinal, source.Port, time.Since(record.sentAt))
 	worker.log.Info("prediction hit", "kind", kind,
 		"stage", record.stage.String(), "ordinal", record.ordinal, "global", record.global, "port", source.Port)
 }
