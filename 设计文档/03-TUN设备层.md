@@ -209,7 +209,7 @@ Windows 解析做语言无关处理：前两列均可解析为 IPv4 即算数据
   − 20  外层 IPv4 头
   − 8   外层 UDP 头
   − 16  GTUN 帧头
-  = 1456  → tun.mtu 配置上限（默认 1280）
+  = 1456  → tun.mtu 配置上限（亦为默认值）
 TUN MTU + 4           → macOS 读缓冲（多留地址族头）
 GTUNHeaderBytes + MTU → UDP 接收缓冲下限（见 05 篇）
 MaxTUNMTU = 65535 − 44 = 65491（协议层理论最大）

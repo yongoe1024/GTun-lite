@@ -34,6 +34,12 @@ func TestLoadClientConfigDefaults(t *testing.T) {
 	if config.Server.ProbeBasePort != 10000 {
 		t.Fatalf("unexpected probe base port: %d", config.Server.ProbeBasePort)
 	}
+	if config.TUN.MTU != 1456 {
+		t.Fatalf("unexpected default mtu: %d", config.TUN.MTU)
+	}
+	if config.Tunnel.OutboundQueuePackets != 4096 || config.Tunnel.InboundQueuePackets != 4096 {
+		t.Fatalf("unexpected queue defaults: %d/%d", config.Tunnel.OutboundQueuePackets, config.Tunnel.InboundQueuePackets)
+	}
 }
 
 // TestLoadClientConfigRejectsBadTier 非法 helper 档位在配置加载阶段即拒绝，

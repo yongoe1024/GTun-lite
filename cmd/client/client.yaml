@@ -7,10 +7,10 @@ identity:
   # name 默认取主机名
 tun:
   name: "gtun0"                # macOS 实际为 utunN，此名仅日志前缀
-  mtu: 1280                    # 上限 1456 = 1500 - 44（IPv4+UDP+GTUN 外层开销）
+  mtu: 1456                    # 无分片上限 = 1500 - 44（IPv4+UDP+GTUN 外层开销）；物理路径更差（如 PPPoE 1492）时下调到「路径 MTU - 44」
 tunnel:
-  outbound_queue: 1024         # 每链路出站队列包数
-  inbound_queue: 1024          # 全局入站队列包数
+  outbound_queue: 4096         # 每链路出站队列包数（内存 ≈ 队列×MTU，4096≈6MB/链路）
+  inbound_queue: 4096          # 全局入站队列包数
 control:
   heartbeat_interval: 20s      # 须明显小于服务端 heartbeat_timeout（默认 60s）
   register_timeout: 10s        # 等待注册确认的时长

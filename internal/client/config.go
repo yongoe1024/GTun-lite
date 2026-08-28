@@ -132,13 +132,16 @@ func (config *ClientConfig) applyDefaults() {
 		config.TUN.Name = "gtun0"
 	}
 	if config.TUN.MTU == 0 {
-		config.TUN.MTU = 1280
+		// 1456 = 1500 - 44（IPv4+UDP+GTUN 外层开销）：干净 1500 路径上的
+		// 无分片上限，每包载荷比 1280 多 14%。物理路径更差（如 PPPoE 1492、
+		// 嵌套隧道 1400）时应手动下调到「路径 MTU - 44」，否则外层被分片。
+		config.TUN.MTU = 1456
 	}
 	if config.Tunnel.OutboundQueuePackets == 0 {
-		config.Tunnel.OutboundQueuePackets = 1024
+		config.Tunnel.OutboundQueuePackets = 4096
 	}
 	if config.Tunnel.InboundQueuePackets == 0 {
-		config.Tunnel.InboundQueuePackets = 1024
+		config.Tunnel.InboundQueuePackets = 4096
 	}
 	if config.Probe.Timeout == 0 {
 		config.Probe.Timeout = 30 * time.Second
