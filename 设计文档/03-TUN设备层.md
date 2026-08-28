@@ -171,9 +171,9 @@ Windows 解析做语言无关处理：前两列均可解析为 IPv4 即算数据
                  RegisterLink(peering, worker)
                         │ 启动
                         ▼
-┌──────────┐  outbound chan  ┌─────────────────┐   GTUN 帧   ┌────────────┐
+┌──────────┐  outbound chan  ┌─────────────────┐  GTUN 帧(批) ┌────────────┐
 │tunReadLoop│ ─────────────▶ │ outboundSender  │ ──────────▶ │ Worker     │
-│  (1 个)   │   (每链路)      │  (每链路 1 个)    │  WriteToUDP │ (UDP socket)│
+│  (1 个)   │   (每链路)      │  (每链路 1 个)    │  SendBatch  │ (UDP socket)│
 └──────────┘                └─────────────────┘             └────────────┘
       ▲ DeliverInbound                                             │
       │                                                            ▼

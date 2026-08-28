@@ -944,21 +944,9 @@ func (worker *linkWorker) PeerLive() (*netip.AddrPort, bool) {
 	return &address, true
 }
 
-// SendFrame 实现 tun.WorkerLink：数据面出站帧经选定路径发给对端。
+// SendBatch 实现 tun.WorkerLink：批量发送出站帧。
 // UDP 写不设期限：无连接语义下写阻塞不是可恢复状态，失败即丢，
 // 可靠性由上层协议（TCP over TUN 的重传）承担。
-func (worker *linkWorker) SendFrame(_ context.Context, frame []byte) error {
-	worker.dataMu.Lock()
-	socket, peer := worker.p2pSocket, worker.peerLive
-	worker.dataMu.Unlock()
-	if socket == nil || peer == nil {
-		return errors.New("worker not connected")
-	}
-	_, err := socket.WriteToUDP(frame, peer)
-	return err
-}
-
-// SendBatch 实现 tun.WorkerLink：批量发送出站帧。
 // Linux 上用 x/net 的 WriteBatch（底层 sendmmsg）一次系统调用发多帧；
 // macOS/Windows 没有 sendmmsg，保持逐包 WriteToUDP——与改造前行为
 // 完全一致。批量路径任何错误（含部分成功）都回落逐包发送，绝不丢帧。
@@ -989,8 +977,10 @@ func (worker *linkWorker) SendBatch(_ context.Context, frames [][]byte) error {
 	if err == nil && sent == len(msgs) {
 		return nil
 	}
-	if err == nil {
-		msgs = msgs[sent:] // 部分成功：剩余帧回落逐包
+	// 部分成功（sendmmsg 出错时也返回已成功发送的数量）：无论 err 与否，
+	// 前 sent 帧都已发出，只回落发送剩余——重发已成功的帧会白白放大流量。
+	if sent > 0 {
+		msgs = msgs[sent:]
 	}
 	for _, msg := range msgs {
 		if _, err := socket.WriteToUDP(msg.Buffers[0], msg.Addr.(*net.UDPAddr)); err != nil {

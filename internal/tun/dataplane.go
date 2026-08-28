@@ -23,11 +23,9 @@ type WorkerLink interface {
 	AttemptToken() common.LinkToken
 	// PeerLive 返回握手选定的对端地址，用于发送出站帧。
 	PeerLive() (*netip.AddrPort, bool)
-	// SendFrame 编码并经由 p2p_socket 发送一帧到 peer_live。
-	SendFrame(ctx context.Context, frame []byte) error
-	// SendBatch 批量发送一批出站帧；平台差异（Linux 批量化、其余逐包
-	// 等价）由实现负责。失败语义与 SendFrame 一致：失败即丢，由上层
-	// 协议（内层 TCP 重传）承担。
+	// SendBatch 批量发送一批出站帧（单帧调用传入长度 1 的切片即可）；
+	// 平台差异（Linux 批量化、其余逐包等价）由实现负责。失败即丢，
+	// 由上层协议（内层 TCP 重传）承担。
 	SendBatch(ctx context.Context, frames [][]byte) error
 }
 

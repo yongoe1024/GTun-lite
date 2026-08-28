@@ -83,16 +83,6 @@ type fakeWorkerLink struct {
 
 func (l *fakeWorkerLink) AttemptToken() common.LinkToken    { return l.token }
 func (l *fakeWorkerLink) PeerLive() (*netip.AddrPort, bool) { return &l.peer, true }
-func (l *fakeWorkerLink) SendFrame(_ context.Context, frame []byte) error {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	if l.sendErr != nil {
-		return l.sendErr
-	}
-	l.sent = append(l.sent, append([]byte(nil), frame...))
-	return nil
-}
-
 func (l *fakeWorkerLink) SendBatch(_ context.Context, frames [][]byte) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
