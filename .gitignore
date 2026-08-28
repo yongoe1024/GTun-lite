@@ -18,3 +18,5 @@ gtun-device-id
 *.err
 
 .client-console.yaml
+
+.client-console.yaml
