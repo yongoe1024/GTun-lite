@@ -149,7 +149,7 @@ type Opener interface {
 |---|---|---|---|
 | 默认网关 | `route -n get default` 解析 `gateway:` 行 | `ip route show default` 取 `via` | `route print -4` 中目的/掩码均 0.0.0.0 行 |
 | /32 存在性 | `netstat -rn -f inet` 全表解析（裸 `<ip>` 或 `<ip>/32` 两种形态）。不能用 `route get`——它做 LPM，任何目的地都命中默认路由 | `ip route show <ip>/32` 输出非空即存在 | `route print -4` 中目的 == ip 且掩码 255.255.255.255 |
-| 悬空判定 | netstat 行 Netif 列（按表头动态定位）的接口已不存在 | 路由行 `dev <name>` 的接口已不存在 | 路由 Interface 列（接口本机地址）无任何现存接口持有 |
+| 悬空判定 | netstat 行 Netif 列（按表头动态定位）的接口已不存在 | 路由行 `dev <name>` 的接口已不存在 | 路由 Interface 列无任何现存接口持有该地址，或该列不可解析为 IP（适配器已拆时的本地化占位词，中文系统为「默认」） |
 | 悬空清理 | `route -q delete -host <ip>` | `ip route del <ip>/32` | `route delete <ip>` |
 | 本机地址 | `net.Interfaces()` 过滤回环/down，收非回环非链路本地 IPv4（跨平台，`route_system.go`） | 同左 | 同左 |
 

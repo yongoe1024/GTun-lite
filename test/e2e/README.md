@@ -58,7 +58,29 @@
 - 工具替代：nc/md5sum 没有——传输用系统自带 `curl.exe`（下载或 `-T` 上传），
   哈希用 `Get-FileHash -Algorithm MD5`；随机数据用 PowerShell
   `RandomNumberGenerator`。Windows ping 的零丢判定锚定 `(0% loss)`。
-- 强杀（`taskkill /F`，模拟崩溃）后对端 /32 路由悬空残留：重启客户端
-  preflight 如实报 ROUTE_CONFLICT，`route delete <ip>` 清理后即恢复。
+- 强杀（`taskkill /F`，模拟崩溃）后对端 /32 路由悬空残留：**2026-08-28
+  起客户端开栈前自动清理**（含中文系统 Interface 列显示「默认」的形态，
+  真机验证）；指向活跃接口的 /32 仍如实报 ROUTE_CONFLICT 交运维。
 - Windows 自身 mDNS（224.0.0.251）会渗入 gtun，数据面按「未注册对端」
   丢弃（Debug 日志可见），属正常防护，无需处理。
+
+## 大流量测量踩坑（2026-08-28 对照实验，均为未解决的既知事实）
+
+- **家用 AP 大流量过载窗口**：持续 GB 级 UDP 打满后，AP 连接跟踪过载，
+  出现 2~8 分钟「ICMP 通、新建 TCP 全被丢弃」的窗口——控制面拨号超时、
+  隧道被保活拆链，期间任何建链尝试都会 PUNCH_TIMEOUT/重连失败。对策：
+  大流量测量用 ≤256MB 短载荷；遇到窗口等它自愈再继续，不要误判为代码
+  缺陷（token 守卫与全量上报会按设计收敛）。
+- **Win 客户端一次无声消亡（未解）**：一次 schtasks 启动的客户端在运行
+  4 分钟后消失——无应用崩溃事件、无日志（当时 run.cmd 是 LF 行尾，日志
+  重定向失效）。原因未明；下次 Windows 长跑前先配 `logging.file` /
+  `error_file`（已支持落盘），复现时才有证据。
+- **测试脚本 shebang 一律 `#!/bin/bash`**：zsh 不做变量分词（本文档早有
+  记录，2026-08-28 用 `#!/bin/zsh` 写测量脚本又踩一次——`$SSH` 整串被
+  当作命令名，runner 与轮询全部静默失效，症状是「结果文件永远不出现」）。
+- **判定测试成败不要用 `go test | grep` 管道**：退出码属于 grep，失败会
+  溜过 `&&` 链（本次曾因此混入一次带病提交）。分开执行或显式检查
+  `${PIPESTATUS}`。
+- **换分支二进制时同步核对测试 yaml**：测试目录 yaml 的 `mtu: 8000`
+  配 main 分支二进制（上限 1456）会 CONFIG_INVALID 拒启——fail-fast
+  行为正确，但容易误当成环境问题排查半天。
