@@ -44,8 +44,10 @@ type ClientConfig struct {
 		// Name 是请求的 TUN 接口名（macOS 仅作日志前缀，实际为 utunN）。
 		Name string `yaml:"name"`
 		// MTU 是内部 IPv4 包上限。本机虚拟 IP 由服务器下发，不在此配置。
-		// 上限 1456 = 1500（外层 MTU）- 44（外层开销：IPv4 头 20 + UDP 头 8 +
-		// GTUN 帧头 16）——超了就会在物理链路上被分片或丢弃。
+		// 上限与默认均为 1456 = 1500（外层 MTU）- 44（外层开销：IPv4 头 20 +
+		// UDP 头 8 + GTUN 帧头 16）：干净 1500 路径上的无分片上限。物理路径
+		// 更差（PPPoE 1492、嵌套隧道 1400）时应下调到「路径 MTU - 44」，
+		// 否则外层在物理链路上被分片。
 		MTU int `yaml:"mtu"`
 	} `yaml:"tun"`
 	Tunnel struct {
