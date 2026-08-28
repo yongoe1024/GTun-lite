@@ -107,7 +107,7 @@ type Opener interface {
 3. 读：`WintunReceivePacket` 取环内指针与长度 → copy → `WintunReleaseReceivePacket`；`ERROR_NO_MORE_ITEMS`(259) 时 `WaitForSingleObject(readEvent, INFINITE)`。
 4. 写：`WintunAllocateSendPacket(len)` → copy → `WintunSendPacket`；环满（`ERROR_BUFFER_OVERFLOW`）静默丢包。
 5. 配置（`win/route_windows.go`）：netsh 配静态地址与 MTU、装对端 /32 路由。
-6. **关闭四步排空协议**（真机 0xc0000005 崩溃教训，git 5b26371）：① `closed` CAS 置位 → ② `WintunEndSession` 唤醒等待 → ③ `inFlight.Wait()` 等在途 Read/Write 排空（每次调用全程 Add/Done）→ ④ 才 `WintunCloseAdapter` 释放内存。DLL 调用用 `syscall.SyscallN` 直调函数地址（vet 的 unsafe 白名单覆盖 SyscallN 而不覆盖 LazyProc.Call）。
+6. **关闭四步排空协议**（真机 0xc0000005 崩溃教训）：① `closed` CAS 置位 → ② `WintunEndSession` 唤醒等待 → ③ `inFlight.Wait()` 等在途 Read/Write 排空（每次调用全程 Add/Done）→ ④ 才 `WintunCloseAdapter` 释放内存。DLL 调用用 `syscall.SyscallN` 直调函数地址（vet 的 unsafe 白名单覆盖 SyscallN 而不覆盖 LazyProc.Call）。
 
 ### 4.4 两平台共同教训：fd 必须先非阻塞再 NewFile
 

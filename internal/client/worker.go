@@ -786,7 +786,7 @@ func (worker *linkWorker) waitBeaconInterval(interval time.Duration) bool {
 // 只向上：helper 的映射在画像之后创建，顺序分配的 NAT 把它排在最后观测
 // 端口的上方。步长取 1 而非观测间隔：若该 NAT 按间隔 s>1 分配，步长 1
 // 仍能覆盖前 helperCount/s 个 helper，好过任何更窄的窗口；按观测间隔外推
-// 命中是保留的扩展点（设计文档 2.2），真机数据不足前不做。
+// 命中是保留的扩展点（见设计文档 08 后续优化路线），真机数据不足前不做。
 func rangeCandidates(lastPort common.Port, helperCount int) []int {
 	count := helperCount + rangeNeighborhood
 	candidates := make([]int, 0, count)
