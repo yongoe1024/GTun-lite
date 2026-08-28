@@ -1,0 +1,161 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="890" viewBox="0 0 1280 890" font-family="'PingFang SC','Hiragino Sans GB','Microsoft YaHei','Noto Sans CJK SC',sans-serif">
+  <defs>
+    <marker id="mBlue" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#2563eb"/></marker>
+    <marker id="mAmber" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#d97706"/></marker>
+    <marker id="mGreen" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#059669"/></marker>
+    <marker id="mSlate" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#64748b"/></marker>
+    <marker id="mGray" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#94a3b8"/></marker>
+  </defs>
+
+  <rect width="1280" height="890" fill="#ffffff"/>
+
+  <!-- 标题 -->
+  <text x="640" y="50" text-anchor="middle" font-size="26" font-weight="700" fill="#0f172a">GTun-Lite 系统架构</text>
+  <text x="640" y="78" text-anchor="middle" font-size="15" fill="#475569">轻量级 P2P 虚拟局域网 —— 服务器管意图 · 客户端管事实 · 数据不经服务器</text>
+
+  <!-- 管理员 -->
+  <rect x="545" y="102" width="190" height="56" rx="8" fill="#f1f5f9" stroke="#94a3b8" stroke-width="1.4"/>
+  <text x="640" y="126" text-anchor="middle" font-size="12.5" font-weight="700" fill="#0f172a">管理员 · 浏览器</text>
+  <text x="640" y="146" text-anchor="middle" font-size="10.5" fill="#64748b">建网 / 配对 / 建链 / 查询状态</text>
+  <line x1="640" y1="158" x2="640" y2="188" stroke="#64748b" stroke-width="1.5" marker-end="url(#mSlate)"/>
+  <text x="654" y="178" font-size="10.5" fill="#64748b">HTTP :9090（默认仅回环）</text>
+
+  <!-- ═══ 客户端 A ═══ -->
+  <rect x="70" y="190" width="290" height="500" rx="10" fill="#ffffff" stroke="#64748b" stroke-width="1.5"/>
+  <rect x="70" y="190" width="290" height="38" rx="10" fill="#dbeafe"/>
+  <rect x="70" y="209" width="290" height="19" fill="#dbeafe"/>
+  <text x="215" y="215" text-anchor="middle" font-size="15" font-weight="700" fill="#1e3a8a">客户端 A（macOS）</text>
+
+  <rect x="90" y="248" width="250" height="44" rx="6" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.2"/>
+  <text x="215" y="266" text-anchor="middle" font-size="12.5" font-weight="600" fill="#0f172a">上层应用</text>
+  <text x="215" y="284" text-anchor="middle" font-size="10.5" fill="#64748b">任意 TCP / UDP 流量</text>
+  <line x1="215" y1="292" x2="215" y2="310" stroke="#94a3b8" stroke-width="1.4" marker-end="url(#mGray)"/>
+
+  <rect x="90" y="312" width="250" height="62" rx="6" fill="#ecfdf5" stroke="#059669" stroke-width="1.4"/>
+  <text x="215" y="333" text-anchor="middle" font-size="12.5" font-weight="700" fill="#047857">TUN 虚拟网卡 gtun0</text>
+  <text x="215" y="351" text-anchor="middle" font-size="10.5" fill="#334155">本机 10.206.0.x/32 · MTU 1456</text>
+  <text x="215" y="367" text-anchor="middle" font-size="10.5" fill="#64748b">对端 /32 主机路由</text>
+  <line x1="215" y1="374" x2="215" y2="394" stroke="#94a3b8" stroke-width="1.4" marker-end="url(#mGray)"/>
+
+  <rect x="90" y="396" width="250" height="232" rx="6" fill="#ffffff" stroke="#94a3b8" stroke-width="1.3"/>
+  <text x="215" y="418" text-anchor="middle" font-size="13" font-weight="700" fill="#0f172a">gtun-client</text>
+  <rect x="104" y="430" width="222" height="52" rx="5" fill="#eff6ff" stroke="#93c5fd" stroke-width="1.1"/>
+  <text x="215" y="450" text-anchor="middle" font-size="12" font-weight="700" fill="#1d4ed8">manager</text>
+  <text x="215" y="468" text-anchor="middle" font-size="10.5" fill="#475569">配置应用 · 状态上报 · 生命周期</text>
+  <rect x="104" y="492" width="222" height="64" rx="5" fill="#eff6ff" stroke="#93c5fd" stroke-width="1.1"/>
+  <text x="215" y="512" text-anchor="middle" font-size="12" font-weight="700" fill="#1d4ed8">worker</text>
+  <text x="215" y="530" text-anchor="middle" font-size="10.5" fill="#475569">五端口画像 · 打洞 · 三步握手</text>
+  <text x="215" y="546" text-anchor="middle" font-size="10.5" fill="#475569">PING 保活（20s / 失活 60s）</text>
+  <rect x="104" y="566" width="222" height="52" rx="5" fill="#ecfdf5" stroke="#6ee7b7" stroke-width="1.1"/>
+  <text x="215" y="586" text-anchor="middle" font-size="12" font-weight="700" fill="#047857">数据面</text>
+  <text x="215" y="604" text-anchor="middle" font-size="10.5" fill="#475569">攒批 ≤32 帧 · GTUN 编码 · SendBatch</text>
+
+  <rect x="90" y="640" width="250" height="34" rx="6" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.1" stroke-dasharray="4 3"/>
+  <text x="215" y="662" text-anchor="middle" font-size="11" fill="#475569">gtun-device-id —— 设备即凭证（自持）</text>
+
+  <!-- ═══ 服务器 ═══ -->
+  <rect x="490" y="190" width="300" height="500" rx="10" fill="#ffffff" stroke="#334155" stroke-width="1.6"/>
+  <rect x="490" y="190" width="300" height="38" rx="10" fill="#e2e8f0"/>
+  <rect x="490" y="209" width="300" height="19" fill="#e2e8f0"/>
+  <text x="640" y="215" text-anchor="middle" font-size="15" font-weight="700" fill="#0f172a">服务器 gtun-server</text>
+
+  <rect x="506" y="244" width="268" height="56" rx="6" fill="#f1f5f9" stroke="#94a3b8" stroke-width="1.3"/>
+  <text x="640" y="266" text-anchor="middle" font-size="12.5" font-weight="600" fill="#0f172a">管理 API + 内嵌 Web 控制台</text>
+  <text x="640" y="284" text-anchor="middle" font-size="10.5" fill="#64748b">HTTP :9090 · go:embed 单页 · 无鉴权（回环）</text>
+
+  <rect x="506" y="316" width="268" height="150" rx="6" fill="#eff6ff" stroke="#93c5fd" stroke-width="1.3"/>
+  <text x="640" y="340" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1d4ed8">控制面 control · TCP :10000</text>
+  <text x="640" y="362" text-anchor="middle" font-size="11" fill="#334155">hub：单 owner 串行状态机</text>
+  <text x="640" y="380" text-anchor="middle" font-size="11" fill="#334155">会话表 · 链路状态机 · 画像配对</text>
+  <text x="640" y="398" text-anchor="middle" font-size="11" fill="#334155">SQLite 4 表：设备 / 网络 / 成员 / 配对</text>
+  <text x="640" y="424" text-anchor="middle" font-size="11" font-weight="700" fill="#1d4ed8">只下发意图：CONNECT / DISCONNECT / QUERY</text>
+  <text x="640" y="446" text-anchor="middle" font-size="10.5" fill="#64748b">链路状态 = 客户端上报的缓存（纯内存）</text>
+
+  <rect x="506" y="486" width="268" height="64" rx="6" fill="#fef3c7" stroke="#f59e0b" stroke-width="1.3"/>
+  <text x="640" y="508" text-anchor="middle" font-size="12.5" font-weight="700" fill="#92400e">探测反射器 UDP :10000–10004</text>
+  <text x="640" y="526" text-anchor="middle" font-size="11" fill="#78350f">无状态回显来源公网地址</text>
+  <text x="640" y="542" text-anchor="middle" font-size="11" fill="#78350f">五端口一致性 → stable / variable 画像</text>
+
+  <rect x="506" y="570" width="268" height="64" rx="6" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.1" stroke-dasharray="4 3"/>
+  <text x="640" y="592" text-anchor="middle" font-size="11" fill="#475569">部署：单二进制 · 无外部运行时 · 纯 Go</text>
+  <text x="640" y="610" text-anchor="middle" font-size="11" fill="#475569">配置在 SQLite（WAL）· 事件走结构化日志</text>
+  <text x="640" y="628" text-anchor="middle" font-size="10.5" fill="#94a3b8">重启不影响隧道；链路视图由客户端上报重建</text>
+
+  <!-- ═══ 客户端 B ═══ -->
+  <rect x="920" y="190" width="290" height="500" rx="10" fill="#ffffff" stroke="#64748b" stroke-width="1.5"/>
+  <rect x="920" y="190" width="290" height="38" rx="10" fill="#dbeafe"/>
+  <rect x="920" y="209" width="290" height="19" fill="#dbeafe"/>
+  <text x="1065" y="215" text-anchor="middle" font-size="15" font-weight="700" fill="#1e3a8a">客户端 B（Windows / Linux）</text>
+
+  <rect x="940" y="248" width="250" height="44" rx="6" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.2"/>
+  <text x="1065" y="266" text-anchor="middle" font-size="12.5" font-weight="600" fill="#0f172a">上层应用</text>
+  <text x="1065" y="284" text-anchor="middle" font-size="10.5" fill="#64748b">任意 TCP / UDP 流量</text>
+  <line x1="1065" y1="292" x2="1065" y2="310" stroke="#94a3b8" stroke-width="1.4" marker-end="url(#mGray)"/>
+
+  <rect x="940" y="312" width="250" height="62" rx="6" fill="#ecfdf5" stroke="#059669" stroke-width="1.4"/>
+  <text x="1065" y="333" text-anchor="middle" font-size="12.5" font-weight="700" fill="#047857">TUN 虚拟网卡 gtun0</text>
+  <text x="1065" y="351" text-anchor="middle" font-size="10.5" fill="#334155">本机 10.206.0.x/32 · MTU 1456</text>
+  <text x="1065" y="367" text-anchor="middle" font-size="10.5" fill="#64748b">对端 /32 主机路由</text>
+  <line x1="1065" y1="374" x2="1065" y2="394" stroke="#94a3b8" stroke-width="1.4" marker-end="url(#mGray)"/>
+
+  <rect x="940" y="396" width="250" height="232" rx="6" fill="#ffffff" stroke="#94a3b8" stroke-width="1.3"/>
+  <text x="1065" y="418" text-anchor="middle" font-size="13" font-weight="700" fill="#0f172a">gtun-client</text>
+  <rect x="954" y="430" width="222" height="52" rx="5" fill="#eff6ff" stroke="#93c5fd" stroke-width="1.1"/>
+  <text x="1065" y="450" text-anchor="middle" font-size="12" font-weight="700" fill="#1d4ed8">manager</text>
+  <text x="1065" y="468" text-anchor="middle" font-size="10.5" fill="#475569">配置应用 · 状态上报 · 生命周期</text>
+  <rect x="954" y="492" width="222" height="64" rx="5" fill="#eff6ff" stroke="#93c5fd" stroke-width="1.1"/>
+  <text x="1065" y="512" text-anchor="middle" font-size="12" font-weight="700" fill="#1d4ed8">worker</text>
+  <text x="1065" y="530" text-anchor="middle" font-size="10.5" fill="#475569">五端口画像 · 打洞 · 三步握手</text>
+  <text x="1065" y="546" text-anchor="middle" font-size="10.5" fill="#475569">PING 保活（20s / 失活 60s）</text>
+  <rect x="954" y="566" width="222" height="52" rx="5" fill="#ecfdf5" stroke="#6ee7b7" stroke-width="1.1"/>
+  <text x="1065" y="586" text-anchor="middle" font-size="12" font-weight="700" fill="#047857">数据面</text>
+  <text x="1065" y="604" text-anchor="middle" font-size="10.5" fill="#475569">攒批 ≤32 帧 · GTUN 编码 · SendBatch</text>
+
+  <rect x="940" y="640" width="250" height="34" rx="6" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.1" stroke-dasharray="4 3"/>
+  <text x="1065" y="662" text-anchor="middle" font-size="11" fill="#475569">gtun-device-id —— 设备即凭证（自持）</text>
+
+  <!-- ═══ 控制面流：A ↔ 服务器 ═══ -->
+  <text x="425" y="352" text-anchor="middle" font-size="10.5" fill="#1d4ed8">上行：注册 · 心跳 · 上报</text>
+  <line x1="362" y1="368" x2="486" y2="368" stroke="#2563eb" stroke-width="1.8" stroke-dasharray="7 4" marker-end="url(#mBlue)"/>
+  <line x1="488" y1="400" x2="364" y2="400" stroke="#2563eb" stroke-width="1.8" stroke-dasharray="7 4" marker-end="url(#mBlue)"/>
+  <text x="425" y="418" text-anchor="middle" font-size="10.5" fill="#1d4ed8">下行：配置 · CONNECT</text>
+
+  <!-- 控制面流：服务器 ↔ B -->
+  <text x="855" y="352" text-anchor="middle" font-size="10.5" fill="#1d4ed8">上行：注册 · 心跳 · 上报</text>
+  <line x1="794" y1="368" x2="916" y2="368" stroke="#2563eb" stroke-width="1.8" stroke-dasharray="7 4" marker-end="url(#mBlue)"/>
+  <line x1="918" y1="400" x2="792" y2="400" stroke="#2563eb" stroke-width="1.8" stroke-dasharray="7 4" marker-end="url(#mBlue)"/>
+  <text x="855" y="418" text-anchor="middle" font-size="10.5" fill="#1d4ed8">下行：配置 · CONNECT</text>
+
+  <!-- 探测流：A ↔ 服务器 -->
+  <text x="425" y="502" text-anchor="middle" font-size="10.5" fill="#92400e">PROBE →（五端口）</text>
+  <line x1="362" y1="514" x2="486" y2="514" stroke="#d97706" stroke-width="1.8" stroke-dasharray="2 4" marker-end="url(#mAmber)"/>
+  <line x1="488" y1="530" x2="364" y2="530" stroke="#d97706" stroke-width="1.8" stroke-dasharray="2 4" marker-end="url(#mAmber)"/>
+  <text x="425" y="548" text-anchor="middle" font-size="10.5" fill="#92400e">← PORT（回显公网地址）</text>
+
+  <!-- 探测流：服务器 ↔ B -->
+  <text x="855" y="502" text-anchor="middle" font-size="10.5" fill="#92400e">PROBE →（五端口）</text>
+  <line x1="794" y1="514" x2="916" y2="514" stroke="#d97706" stroke-width="1.8" stroke-dasharray="2 4" marker-end="url(#mAmber)"/>
+  <line x1="918" y1="530" x2="794" y2="530" stroke="#d97706" stroke-width="1.8" stroke-dasharray="2 4" marker-end="url(#mAmber)"/>
+  <text x="855" y="548" text-anchor="middle" font-size="10.5" fill="#92400e">← PORT（回显公网地址）</text>
+
+  <!-- ═══ 数据面：P2P 直连 ═══ -->
+  <path d="M 215 692 L 215 762 L 1065 762 L 1065 694" fill="none" stroke="#059669" stroke-width="3.5" marker-end="url(#mGreen)"/>
+  <path d="M 1065 692 L 1065 762 L 215 762 L 215 694" fill="none" stroke="#059669" stroke-width="3.5" marker-end="url(#mGreen)"/>
+  <text x="640" y="748" text-anchor="middle" font-size="15" font-weight="700" fill="#047857">数据面：GTUN 帧 · UDP P2P 直连（不经服务器）</text>
+  <text x="640" y="784" text-anchor="middle" font-size="11" fill="#475569">打洞 PUNCH / PUNCH_ACK / PUNCH_OK 同路径 · 两侧 NAT 打通后直接互通</text>
+
+  <rect x="455" y="800" width="370" height="34" rx="17" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.4"/>
+  <text x="640" y="822" text-anchor="middle" font-size="12" font-weight="700" fill="#166534">服务器重启 / 宕机 → 已建立链路不受影响</text>
+
+  <!-- ═══ 图例 ═══ -->
+  <g font-size="11" fill="#475569">
+    <line x1="215" y1="866" x2="275" y2="866" stroke="#2563eb" stroke-width="1.8" stroke-dasharray="7 4"/>
+    <text x="285" y="870">控制面（TCP · JSON Lines）</text>
+    <line x1="475" y1="866" x2="535" y2="866" stroke="#d97706" stroke-width="1.8" stroke-dasharray="2 4"/>
+    <text x="545" y="870">探测面（UDP）</text>
+    <line x1="675" y1="866" x2="735" y2="866" stroke="#059669" stroke-width="3.5"/>
+    <text x="745" y="870">数据面（GTUN / UDP P2P）</text>
+    <line x1="945" y1="866" x2="1005" y2="866" stroke="#64748b" stroke-width="1.5"/>
+    <text x="1015" y="870">管理面（HTTP）</text>
+  </g>
+</svg>
