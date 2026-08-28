@@ -421,6 +421,8 @@ function renderLinks() {
         ? '<span class="hint">—</span>'
         : `${esc(fmtDT(l.updated_at))} <span class="hint">（${esc(fmtAgo(l.updated_at))}）</span>`}</td>
       <td class="ops">
+        <button class="btn" data-action="refresh-link" data-a="${esc(l.device_a)}" data-b="${esc(l.device_b)}"
+          ${l.online_a || l.online_b ? 'title="向双方下发 QUERY，设备随后的上报会刷新本页状态（离线一侧自动跳过）"' : 'disabled title="双方离线：无可查询对象"'}>刷新状态</button>
         <button class="btn" data-action="connect" data-a="${esc(l.device_a)}" data-b="${esc(l.device_b)}"
           ${l.state === 'CONNECTED'
             ? 'disabled title="已连接；重建请先断链"'
@@ -432,7 +434,7 @@ function renderLinks() {
   return `
     <section>
       <div class="viewbar">
-        <span class="hint">链路状态视图（内存，重启清空）。在线状态实时；链路状态与时间戳是设备最后上报的已知值（缓存），对本页设备点「查询」可触发其实时上报刷新。</span>
+        <span class="hint">链路状态视图（内存，重启清空）。在线状态实时；链路状态与时间戳是设备最后上报的已知值（缓存），「刷新状态」向该行双方下发 QUERY，设备上报后本页随之更新。</span>
       </div>
       ${table(['#', '网络', '设备 A', '设备 B', '状态', '令牌', '更新时间', '操作'], rows)}
     </section>`;
@@ -507,6 +509,19 @@ $('#main').addEventListener('click', async e => {
         await call('DELETE', `/api/networks/${d.network}/peerings/${d.peering}`);
         setMsg('配对已删除', 'ok');
         refresh();
+        break;
+      }
+      case 'refresh-link': {
+        const results = await Promise.allSettled([
+          call('POST', `/api/devices/${d.a}/query`),
+          call('POST', `/api/devices/${d.b}/query`),
+        ]);
+        const ok = results.filter(r => r.status === 'fulfilled').length;
+        if (ok === 2) setMsg('QUERY 已下发双方，设备上报后本页状态随之更新', 'ok');
+        else if (ok === 1) setMsg('QUERY 已下发在线一侧，另一台离线已跳过', 'ok');
+        else setMsg('双方均已离线，无法查询', 'err');
+        refresh();
+        if (ok > 0) setTimeout(refresh, 1500);
         break;
       }
       case 'connect': {
