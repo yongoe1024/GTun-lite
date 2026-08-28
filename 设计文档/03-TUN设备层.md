@@ -136,7 +136,12 @@ type Opener interface {
 | 5 | 与本机已有地址冲突 | `LocalAddresses` 已含该地址 |
 | 6 | 结构非法 | 非 IPv4 / 非单播 |
 
-**无「GTun 自身路由」豁免**：preflight 时系统里若已有 /32（别的 VPN 或上次异常退出残留），一律如实报冲突，清理责任交运维。幂等的重应用不靠豁免，靠 manager 的「拓扑未变不重建 + 重建前先拆干净」（见 [04-客户端.md](04-客户端.md)）——preflight 执行时系统里本就不应存在 GTun 路由。
+**残留路由分两层处理**（开栈前由 `CleanupDanglingHostRoutes` 先行清理）：
+
+- **悬空残留（自动清理）**：异常退出（崩溃/强杀/断电）会留下指向**已拆接口**的 /32——绑定接口已消失，归属零歧义，开栈前自动删除，不再需要人工 `route delete`；
+- **活跃冲突（如实报错）**：指向现存接口的 /32 一律报 ErrRouteConflict——可能是其他 VPN 的真实路由，清理责任仍交运维，不静默接管。判定失败（解析不出绑定接口）同样保守按冲突处理。
+
+幂等的重应用不靠豁免，仍由 manager 的「拓扑未变不重建 + 重建前先拆干净」保证（见 [04-客户端.md](04-客户端.md)）。
 
 ### 5.3 平台只读查询（route_system*.go，供 preflight）
 
@@ -144,6 +149,8 @@ type Opener interface {
 |---|---|---|---|
 | 默认网关 | `route -n get default` 解析 `gateway:` 行 | `ip route show default` 取 `via` | `route print -4` 中目的/掩码均 0.0.0.0 行 |
 | /32 存在性 | `netstat -rn -f inet` 全表解析（裸 `<ip>` 或 `<ip>/32` 两种形态）。不能用 `route get`——它做 LPM，任何目的地都命中默认路由 | `ip route show <ip>/32` 输出非空即存在 | `route print -4` 中目的 == ip 且掩码 255.255.255.255 |
+| 悬空判定 | netstat 行 Netif 列（按表头动态定位）的接口已不存在 | 路由行 `dev <name>` 的接口已不存在 | 路由 Interface 列（接口本机地址）无任何现存接口持有 |
+| 悬空清理 | `route -q delete -host <ip>` | `ip route del <ip>/32` | `route delete <ip>` |
 | 本机地址 | `net.Interfaces()` 过滤回环/down，收非回环非链路本地 IPv4（跨平台，`route_system.go`） | 同左 | 同左 |
 
 Windows 解析做语言无关处理：前两列均可解析为 IPv4 即算数据行（应对本地化输出）。
