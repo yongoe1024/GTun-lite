@@ -50,45 +50,70 @@ func TestClassifyProfileIPChanged(t *testing.T) {
 	}
 }
 
-// TestRangeCandidates 数量与顺序：helper_count+48 个、从观测端口向上递增。
-func TestRangeCandidates(t *testing.T) {
-	helperCount := 256
-	candidates := rangeCandidates(40000, helperCount)
-	if len(candidates) != helperCount+rangeNeighborhood {
-		t.Fatalf("expected %d candidates, got %d", helperCount+rangeNeighborhood, len(candidates))
+// TestPruneHelpersKeepsSelected 建成收缩：只保留 commit 选中的 helper，
+// 其余关闭（被关 socket 再写必错），选中项仍可写。
+func TestPruneHelpersKeepsSelected(t *testing.T) {
+	sockets, err := CreateHelpers(3, net.IPv4(127, 0, 0, 1))
+	if err != nil {
+		t.Fatal(err)
 	}
-	if candidates[0] != 40001 || candidates[1] != 40002 {
-		t.Fatalf("candidates must ascend from the port above the observation, got %v", candidates[:2])
+	defer func() {
+		for _, socket := range sockets {
+			_ = socket.Close()
+		}
+	}()
+	worker := &linkWorker{log: testLog()}
+	worker.helpers = []helperSocket{
+		{socket: sockets[0], id: "a"}, {socket: sockets[1], id: "b"}, {socket: sockets[2], id: "c"},
 	}
-	for index, port := range candidates {
-		if port != 40001+index {
-			t.Fatalf("candidate %d must be %d, got %d", index, 40001+index, port)
-		}
-		if port < portSpaceMin || port > portSpaceMax {
-			t.Fatalf("candidate %d outside port space", port)
-		}
+	target := &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 9}
+
+	worker.pruneHelpers(sockets[1])
+
+	if len(worker.helpers) != 1 || worker.helpers[0].id != "b" {
+		t.Fatalf("expected only the selected helper kept, got %v", worker.helpers)
+	}
+	if _, err := sockets[0].WriteToUDP([]byte("x"), target); err == nil {
+		t.Fatal("dropped helper must be closed")
+	}
+	if _, err := sockets[2].WriteToUDP([]byte("x"), target); err == nil {
+		t.Fatal("dropped helper must be closed")
+	}
+	if _, err := sockets[1].WriteToUDP([]byte("x"), target); err != nil {
+		t.Fatalf("selected helper must stay writable: %v", err)
 	}
 }
 
-// TestRangeCandidatesWrap 候选越过端口空间上界时正确回绕到下界。
-func TestRangeCandidatesWrap(t *testing.T) {
-	candidates := rangeCandidates(common.Port(portSpaceMax-2), 8)
-	if len(candidates) != 8+rangeNeighborhood {
-		t.Fatalf("expected %d candidates, got %d", 8+rangeNeighborhood, len(candidates))
+// TestPunchSentScanMetadata 扫描候选的发送记录携带阶段元数据（命中溯源：
+// 「哪一级、第几次猜中的」），普通 PUNCH（信标/直连/反向）stage 为零，
+// 命中溯源据此区分「预测命中」与「回程握手」。
+func TestPunchSentScanMetadata(t *testing.T) {
+	sender, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
 	}
-	if candidates[0] != portSpaceMax-1 || candidates[1] != portSpaceMax {
-		t.Fatalf("ascending start violated: %v", candidates[:2])
+	defer sender.Close()
+	worker := &linkWorker{log: testLog(), punchSent: make(map[punchSentKey]punchSentRecord)}
+	scanned := &net.UDPAddr{IP: net.IPv4(203, 0, 113, 7), Port: 50000}
+	plain := &net.UDPAddr{IP: net.IPv4(203, 0, 113, 7), Port: 50001}
+
+	worker.sendScanPunch(sender, "main", scanned, scanCandidate{Port: 50000, Stage: scanStageSweep, Ordinal: 342}, 363)
+	worker.sendPunch(sender, "main", plain)
+
+	record, ok := worker.lookupPunchSent("main", scanned)
+	if !ok || record.stage != scanStageSweep || record.ordinal != 342 || record.global != 363 {
+		t.Fatalf("scan record metadata wrong: %+v ok=%v", record, ok)
 	}
-	if candidates[2] != portSpaceMin {
-		t.Fatalf("above-space neighbor must wrap to min, got %d", candidates[2])
+	record, ok = worker.lookupPunchSent("main", plain)
+	if !ok || record.stage != 0 {
+		t.Fatalf("plain record must carry zero stage: %+v ok=%v", record, ok)
 	}
-	seen := map[int]bool{}
-	for _, port := range candidates {
-		if seen[port] {
-			t.Fatalf("duplicate candidate %d", port)
-		}
-		seen[port] = true
+	if !worker.punchSentFrom("main", scanned) || !worker.punchSentFrom("main", plain) {
+		t.Fatal("both kinds of send must satisfy punchSentFrom")
 	}
+	// 命中溯源分支冒烟：扫描来源触发观察日志，非扫描来源静默忽略。
+	worker.notePredictionHit("main", scanned, "ack")
+	worker.notePredictionHit("main", plain, "ack")
 }
 
 // TestCreateHelpersCount 创建数量准确、绑定指定地址、可关闭。
@@ -233,7 +258,7 @@ func TestConnectedLink0SupplementsOKOnSelectedPath(t *testing.T) {
 	worker := &linkWorker{
 		token: token, log: testLog(),
 		events: make(chan WorkerEvent, 4), ctx: ctx, cancel: cancel,
-		punchSent: make(map[punchSentKey]struct{}), reverseSent: make(map[reverseKey]struct{}),
+		punchSent: make(map[punchSentKey]punchSentRecord), reverseSent: make(map[reverseKey]struct{}),
 		connectedCh: make(chan struct{}),
 	}
 
@@ -322,7 +347,7 @@ func TestLink1RepliesWithReversePunch(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	worker := &linkWorker{
 		token: token, log: testLog(), ctx: ctx, cancel: cancel,
-		punchSent:   make(map[punchSentKey]struct{}),
+		punchSent:   make(map[punchSentKey]punchSentRecord),
 		reverseSent: make(map[reverseKey]struct{}),
 	}
 	receiver, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
@@ -384,13 +409,15 @@ func TestLink1RepliesWithReversePunch(t *testing.T) {
 
 // fakeStablePeer 扮演 stable 对端：对收到的每个 PUNCH，从真实收包地址回
 // ACK 与 PUNCH_OK（TargetSocketID 取 PUNCH 的 SenderSocketID 原样回指）。
-// 同时记录每个源端口声明的 SenderSocketID，供测试核对配对正确性。
+// 同时记录每个源端口声明的 SenderSocketID 与累计发包数，供测试核对
+// 配对正确性与信标持续性。
 type fakeStablePeer struct {
 	socket *net.UDPConn
 	id     common.SocketID
 
 	mu       sync.Mutex
 	declared map[int]common.SocketID // PUNCH 源端口 → 声明的 SenderSocketID
+	counts   map[int]int             // PUNCH 源端口 → 累计收到数
 }
 
 func (peer *fakeStablePeer) declarations() map[int]common.SocketID {
@@ -403,13 +430,20 @@ func (peer *fakeStablePeer) declarations() map[int]common.SocketID {
 	return snapshot
 }
 
+// count 返回某源端口累计发出的 PUNCH 数（信标持续性断言用）。
+func (peer *fakeStablePeer) count(port int) int {
+	peer.mu.Lock()
+	defer peer.mu.Unlock()
+	return peer.counts[port]
+}
+
 func startFakeStablePeer(t *testing.T, token common.LinkToken) *fakeStablePeer {
 	t.Helper()
 	socket, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	peer := &fakeStablePeer{socket: socket, id: common.GenerateSocketID(), declared: make(map[int]common.SocketID)}
+	peer := &fakeStablePeer{socket: socket, id: common.GenerateSocketID(), declared: make(map[int]common.SocketID), counts: make(map[int]int)}
 	t.Cleanup(func() { _ = socket.Close() })
 	go func() {
 		buffer := make([]byte, common.MaxP2PControlDatagram+1)
@@ -424,6 +458,7 @@ func startFakeStablePeer(t *testing.T, token common.LinkToken) *fakeStablePeer {
 			}
 			peer.mu.Lock()
 			peer.declared[source.Port] = control.SenderSocketID
+			peer.counts[source.Port]++
 			peer.mu.Unlock()
 			ack := common.P2PControl{Type: common.P2PTypePunchACK, Token: token, TargetSocketID: control.SenderSocketID, SenderSocketID: peer.id}
 			if encoded, err := common.MarshalP2PControl(ack); err == nil {
@@ -468,7 +503,7 @@ func TestVariableLink1HelperHandshake(t *testing.T) {
 		events: make(chan WorkerEvent, 64), incoming: make(chan common.NATProfile, 1),
 		ctx: ctx, cancel: cancel,
 		localVirtualIP: "10.200.0.1", peerVirtualIP: "10.200.0.2",
-		punchSent: make(map[punchSentKey]struct{}), reverseSent: make(map[reverseKey]struct{}),
+		punchSent: make(map[punchSentKey]punchSentRecord), reverseSent: make(map[reverseKey]struct{}),
 		ackAssoc: make(map[ackKey]ackAssociation), connectedCh: make(chan struct{}),
 		eventsIn: make(chan wireEvent, 64),
 	}
@@ -497,6 +532,25 @@ func TestVariableLink1HelperHandshake(t *testing.T) {
 		worker.finish()
 	}()
 
+	// helpers 一出现就快照真值表：commit 会把 helper 池收缩到选中的那一个
+	// （pruneHelpers），事后就查不到被收缩 socket 的 ID 了。helpers 切片在
+	// punch() 里一次锁内填满，快照要么空要么全量，不会撞上收缩。
+	truth := map[int]common.SocketID{
+		socket.LocalAddr().(*net.UDPAddr).Port: worker.mainSocketID,
+	}
+	populated := time.Now().Add(4 * time.Second)
+	for {
+		worker.helperMu.Lock()
+		for _, helper := range worker.helpers {
+			truth[helper.socket.LocalAddr().(*net.UDPAddr).Port] = helper.id
+		}
+		worker.helperMu.Unlock()
+		if len(truth) > 1 || time.Now().After(populated) {
+			break
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+
 	deadline := time.Now().Add(4 * time.Second)
 	for !worker.connected.Load() {
 		if time.Now().After(deadline) {
@@ -506,15 +560,6 @@ func TestVariableLink1HelperHandshake(t *testing.T) {
 	}
 	time.Sleep(50 * time.Millisecond) // 收齐在途 PUNCH 的声明记录
 
-	// 核对配对：每个已轮询 helper 的 PUNCH 声明 ID 必须等于该 socket 的真实 ID。
-	truth := map[int]common.SocketID{
-		socket.LocalAddr().(*net.UDPAddr).Port: worker.mainSocketID,
-	}
-	worker.helperMu.Lock()
-	for _, helper := range worker.helpers {
-		truth[helper.socket.LocalAddr().(*net.UDPAddr).Port] = helper.id
-	}
-	worker.helperMu.Unlock()
 	declarations := peer.declarations()
 	if len(declarations) == 0 {
 		t.Fatal("fake peer observed no PUNCH datagrams")
@@ -525,13 +570,21 @@ func TestVariableLink1HelperHandshake(t *testing.T) {
 				port, declaredID, truth[port])
 		}
 	}
-	// 信标持续：本侧建成后 helper 不得停发（pollHelpers 的退出条件不含
-	// connectedCh）——晚建成的对端靠持续 PUNCH 获得握手来源（variable×stable
-	// 公网真机：本侧 link0 59ms 建成即停发，对端 15s 预算内零握手来源，
-	// PUNCH_TIMEOUT）。
+	// 信标持续（收缩后语义）：建成后 helper 池收缩到选中的那一个，但选中
+	// 路径的信标不得停发——晚建成的对端靠持续 PUNCH 获得握手来源，
+	// sendSelectedPathOK 的触发也依赖它（variable×stable 公网真机：本侧
+	// link0 59ms 建成即停发，对端 15s 预算内零握手来源，PUNCH_TIMEOUT）。
+	worker.dataMu.Lock()
+	selected := worker.p2pSocket
+	worker.dataMu.Unlock()
+	if selected == nil {
+		t.Fatal("connected without a selected p2p socket")
+	}
+	selectedPort := selected.LocalAddr().(*net.UDPAddr).Port
+	before := peer.count(selectedPort)
 	time.Sleep(150 * time.Millisecond)
-	if grown := len(peer.declarations()); grown <= len(declarations) {
-		t.Fatalf("helper beacon stopped after commit: %d sources before, %d after", len(declarations), grown)
+	if after := peer.count(selectedPort); after <= before {
+		t.Fatalf("selected helper beacon stopped after commit: %d packets before, %d after", before, after)
 	}
 }
 

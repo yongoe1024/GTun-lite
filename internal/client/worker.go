@@ -24,7 +24,7 @@ import (
 const (
 	// punchDirectInterval 是 stable-stable 直连 PUNCH 的发送间隔。
 	punchDirectInterval = 100 * time.Millisecond
-	// punchPollInterval 是 Range 预测与 helper 轮询的全局最小发送间隔。
+	// punchPollInterval 是三级扫描与 helper 轮询的全局最小发送间隔。
 	punchPollInterval = 3 * time.Millisecond
 	// punchOKResendInterval / punchOKResendCount 是 PUNCH_OK 的可靠重发：
 	// 首次立即发送，随后按间隔再发 3 次（协议要求，link1 侧靠它完成握手）。
@@ -37,17 +37,7 @@ const (
 	// 失活即上报 TUNNEL_LOST，任一侧上报即拆链（服务器不变量 3）。
 	keepaliveInterval = 20 * time.Second
 	keepaliveTimeout  = 60 * time.Second
-	// rangeNeighborhood 是 Range 预测窗口在 helper 档位之上的向上余量：
-	// 候选宽度 = helper_count + 48。helper 的映射端口在画像之后创建，
-	// 顺序分配的 NAT 把它排在最后观测端口的上方，因此窗口只向上取；
-	// 余量覆盖 NAT 为画像之外的首次映射多预留的端口。
-	// 候选集循环重发直到打洞预算耗尽——预算的大头必须花在打洞上，
-	// 而不是发完一轮就空等对端超时。
-	rangeNeighborhood = 48
-	// 端口空间下上界：候选回绕在这个范围内，避开特权端口与非法端口。
-	portSpaceMin  = 1024
-	portSpaceMax  = 65535
-	portSpaceSize = portSpaceMax - portSpaceMin + 1
+	// 端口空间与三级扫描的窗口常量在 scanplan.go（候选流纯逻辑所在处）。
 )
 
 // WorkerEvent 是 Worker 向控制会话汇报的里程碑。控制循环把它翻译成
@@ -118,7 +108,7 @@ type linkWorker struct {
 	eventsIn chan wireEvent
 	// 握手状态（仅 owner 读写）。
 	punchSentMu sync.Mutex
-	punchSent   map[punchSentKey]struct{}
+	punchSent   map[punchSentKey]punchSentRecord
 	reverseSent map[reverseKey]struct{}
 	ackAssoc    map[ackKey]ackAssociation
 	connectedCh chan struct{}
@@ -140,6 +130,17 @@ type punchSentKey struct {
 	localSocket common.SocketID
 	ip          [4]byte
 	port        int
+}
+
+// punchSentRecord 是 punchSent 的值。stage 非零表示该发是三级扫描的候选
+// （命中溯源：入站报文校验通过时可回答「哪一级、第几次猜中的」）；
+// 零值出现在信标、直连与反向 PUNCH——它们不是预测，命中也不算。
+// global 是跨阶段的全局发送序号，仅观察日志用。
+type punchSentRecord struct {
+	stage   scanStage
+	ordinal int
+	global  int
+	sentAt  time.Time
 }
 
 // reverseKey 标识一个 (来源, 发送者socket, 接收socket) 三元组，link0 侧
@@ -194,7 +195,7 @@ func startLinkWorker(config ClientConfig, device common.DeviceID, token common.L
 		events: events, incoming: make(chan common.NATProfile, 1),
 		ctx: ctx, cancel: cancel,
 		localVirtualIP: localIP, peerVirtualIP: peer.IP, deliverInbound: deliverInbound,
-		punchSent: make(map[punchSentKey]struct{}), reverseSent: make(map[reverseKey]struct{}),
+		punchSent: make(map[punchSentKey]punchSentRecord), reverseSent: make(map[reverseKey]struct{}),
 		ackAssoc: make(map[ackKey]ackAssociation), connectedCh: make(chan struct{}),
 		eventsIn: make(chan wireEvent, 64),
 	}
@@ -556,7 +557,12 @@ func (worker *linkWorker) handle(event wireEvent, isLink0 bool) {
 // commit 时的 OK 突发早已发完）。
 func (worker *linkWorker) handlePunch(event wireEvent, isLink0 bool) {
 	receiving := event.socketID
-	worker.recordPunchSent(receiving, event.source)
+	// 观察设施（临时，随 scanlog.go 删除）：源端口若出自此前的扫描候选，
+	// 这一发就是预测命中。必须先查后记——下面的登记会让本次查询恒真。
+	guessed := worker.punchSentFrom(receiving, event.source)
+	worker.notePredictionHit(receiving, event.source, "punch")
+	scanInboundOnce(event.source.Port, guessed)
+	worker.recordPunchSent(receiving, event.source, punchSentRecord{sentAt: time.Now()})
 	ack := common.P2PControl{Type: common.P2PTypePunchACK, Token: worker.token, TargetSocketID: event.control.SenderSocketID, SenderSocketID: receiving}
 	if encoded, err := common.MarshalP2PControl(ack); err == nil {
 		_, _ = event.socket.WriteToUDP(encoded, event.source)
@@ -595,6 +601,7 @@ func (worker *linkWorker) handleACKLink0(event wireEvent) {
 	if worker.connected.Load() || event.control.TargetSocketID != event.socketID || !worker.punchSentFrom(event.socketID, event.source) {
 		return
 	}
+	worker.notePredictionHit(event.socketID, event.source, "ack")
 	worker.commit(event.socket, event.socketID, event.control.SenderSocketID, event.source)
 	ok := common.P2PControl{Type: common.P2PTypePunchOK, Token: worker.token, TargetSocketID: event.control.SenderSocketID, SenderSocketID: event.socketID}
 	go worker.resendPunchOK(event.socket, ok, event.source)
@@ -605,6 +612,7 @@ func (worker *linkWorker) handleACKLink1(event wireEvent) {
 	if event.control.TargetSocketID != event.socketID || !worker.punchSentFrom(event.socketID, event.source) {
 		return
 	}
+	worker.notePredictionHit(event.socketID, event.source, "ack")
 	key := ackKey{localSocket: event.socketID, port: event.source.Port}
 	copy(key.ip[:], event.source.IP.To4())
 	worker.ackAssoc[key] = ackAssociation{peerSocketID: event.control.SenderSocketID}
@@ -640,6 +648,36 @@ func (worker *linkWorker) commit(socket *net.UDPConn, localID, peerID common.Soc
 	worker.log.Info("punch connected", "peer", source.String(), "local_socket", string(localID), "peer_socket", string(peerID))
 	worker.emit(WorkerEvent{PeeringID: worker.peering, Token: worker.token, Kind: WorkerConnected})
 	close(worker.connectedCh) // 发送 goroutine 由此退出（helper 信标除外，见 pollHelpers）
+	worker.pruneHelpers(socket)
+}
+
+// pruneHelpers 在建成时收缩 helper 池：只保留 commit 选中的那个 helper，
+// 其余关闭（锁内摘除、锁外 Close，finish 同范式；被关 helper 的接收循环
+// 随 Close 退出）。pollHelpers 逐发取当前切片，立即仅对选中 helper 继续
+// 信标至
+// 预算耗尽——它同时承担映射保活与 sendSelectedPathOK 的触发，收缩后
+// 对端晚建成时的握手补发路径不受影响。commit 落在主 socket 时池内无
+// 匹配项，全清即可（variable 侧正常经 helper 建成，此处只是防御）。
+func (worker *linkWorker) pruneHelpers(keep *net.UDPConn) {
+	worker.helperMu.Lock()
+	kept := make([]helperSocket, 0, 1)
+	var dropped []*net.UDPConn
+	for _, helper := range worker.helpers {
+		if helper.socket == keep {
+			kept = append(kept, helper)
+		} else {
+			dropped = append(dropped, helper.socket)
+		}
+	}
+	worker.helpers = kept
+	worker.helperMu.Unlock()
+	for _, socket := range dropped {
+		_ = socket.Close()
+	}
+	if len(dropped) > 0 {
+		worker.log.Info("helpers pruned to selected path", "closed", len(dropped))
+		scanNote("helpers pruned", "closed", len(dropped))
+	}
 }
 
 // sendSelectedPathOK 在本侧选定的路径上补发一次 PUNCH_OK：从 p2pSocket
@@ -712,24 +750,48 @@ func (worker *linkWorker) directPunch(peer common.NATProfile, deadline time.Time
 	}
 }
 
-// rangeScan 等待 helper 初始化窗口后，从对端最后观测端口向上扫描：
-// helper_count+48 个候选由近及远，全局 3ms 间隔。候选集循环重发
-// 直到建成、取消或预算耗尽——预算的含义就是「打这么久」，
-// 发完一轮就停会把预算的大头变成空等。
+// rangeScan 等待 helper 初始化窗口后，按三级候选流扫描对端 variable 侧
+// 的 helper 映射端口：邻域（最后观测端口 ±10）→ 均匀扫描（步长
+// helper_count/4 覆盖全端口空间）→ 无重复随机填满剩余预算。上一级发完
+// 立即进入下一级；建成（senderExited 监听 connectedCh）、取消或预算耗尽
+// 即止。候选生成见 scanplan.go；每发候选记观察日志（临时设施，scanlog.go）。
 func (worker *linkWorker) rangeScan(peer common.NATProfile, deadline time.Time) {
 	if worker.waitSendInterval(helperInitWindow) {
 		return
 	}
 	ip := net.ParseIP(string(peer.PublicIP)).To4()
-	candidates := rangeCandidates(peer.Ports[len(peer.Ports)-1], worker.config.Punch.HelperCount)
-	worker.log.Debug("range scan started", "center_port", int(peer.Ports[len(peer.Ports)-1]), "candidates", len(candidates), "peer_ip", string(peer.PublicIP))
+	lastPort := peer.Ports[len(peer.Ports)-1]
+	helperCount := worker.config.Punch.HelperCount
+	rng := newScanRng()
+	global := 0
+	defer worker.scanEnd(&global)
+	scanNote("scan start", "peer_ip", string(peer.PublicIP), "last_port", int(lastPort),
+		"helper_count", helperCount, "stride", helperCount/4,
+		"budget", time.Until(deadline).Round(time.Millisecond).String())
 	for !worker.senderExited(deadline) {
-		for _, port := range candidates {
+		stream := newScanStream(lastPort, helperCount, rng)
+		lastStage := scanStage(0)
+		for {
+			candidate, ok := stream.next()
+			if !ok {
+				// 整个端口空间已发完（15s 预算 @3ms 发不到 64512 个候选，
+				// 实际到不了这里）：重建流重扫，等价旧行为的循环重发。
+				scanNote("scan stream exhausted, restarting", "sent", global)
+				break
+			}
 			if worker.senderExited(deadline) {
 				return
 			}
-			target := &net.UDPAddr{IP: ip, Port: port}
-			worker.sendPunch(worker.mainSocketRef(), worker.mainSocketID, target)
+			if candidate.Stage != lastStage {
+				scanNote("stage begin", "stage", candidate.Stage.String(),
+					"candidates", stream.stageCount(candidate.Stage))
+				lastStage = candidate.Stage
+			}
+			global++
+			target := &net.UDPAddr{IP: ip, Port: candidate.Port}
+			worker.sendScanPunch(worker.mainSocketRef(), worker.mainSocketID, target, candidate, global)
+			scanNote("candidate sent", "stage", candidate.Stage.String(),
+				"ordinal", candidate.Ordinal, "global", global, "port", candidate.Port)
 			if worker.waitSendInterval(punchPollInterval) {
 				return
 			}
@@ -737,28 +799,45 @@ func (worker *linkWorker) rangeScan(peer common.NATProfile, deadline time.Time) 
 	}
 }
 
-// pollHelpers 让全部 helper 按全局 3ms 间隔轮询向对端 stable 端点发 PUNCH。
+// scanEnd 记扫描收尾（原因 + 总发包数）。临时观察设施，随 scanlog.go 删除。
+func (worker *linkWorker) scanEnd(sent *int) {
+	reason := "budget exhausted"
+	if worker.connected.Load() {
+		reason = "connected"
+	} else if worker.ctx.Err() != nil {
+		reason = "cancelled"
+	}
+	scanNote("scan end", "reason", reason, "sent", *sent)
+}
+
+// pollHelpers 让 helper 池按全局 3ms 间隔轮流向对端 stable 端点发 PUNCH。
 // socket 与其 SocketID 同出 helpers 切片，SenderSocketID 必然属于发包的 socket。
+//
+// 每发都从当前 helpers 切片取（锁内逐发取，不再按轮快照）：commit 收缩
+// 池后轮询立即收敛到选中的 helper，不会对着已关闭的 socket 空转一整轮——
+// 按轮快照在收缩后会留下 helper_count×3ms 的无信标间隙。
 //
 // 信标语义：刻意不在本侧建成时停发（与 directPunch/rangeScan 的退出条件
 // 不同）。variable 侧（尤其作为 link0）可能远早于对端建成——对端的握手
 // 来源只有我们持续发出的 PUNCH（运营商 NAT 常按流随机分配端口，对端的
-// Range 扫描打不中我们的映射，公网真机实证）。本侧建成后继续播信标直到
-// 预算耗尽或取消，同时维持全部 helper 映射不过期；代价是预算内约
-// 333 包/秒的发送，可忽略。
+// 扫描打不中我们的映射，公网真机实证）。本侧建成后继续播信标直到预算
+// 耗尽或取消，同时维持映射不过期；代价是预算内约 333 包/秒的发送，可忽略。
 func (worker *linkWorker) pollHelpers(target *net.UDPAddr, deadline time.Time) {
+	cursor := 0
 	for !worker.beaconExited(deadline) {
 		worker.helperMu.Lock()
-		helpers := append([]helperSocket(nil), worker.helpers...)
+		count := len(worker.helpers)
+		var helper helperSocket
+		if count > 0 {
+			helper = worker.helpers[cursor%count]
+			cursor++
+		}
 		worker.helperMu.Unlock()
-		for _, helper := range helpers {
-			if worker.beaconExited(deadline) {
-				return
-			}
+		if count > 0 {
 			worker.sendPunch(helper.socket, helper.id, target)
-			if worker.waitBeaconInterval(punchPollInterval) {
-				return
-			}
+		}
+		if worker.waitBeaconInterval(punchPollInterval) {
+			return
 		}
 	}
 }
@@ -781,23 +860,6 @@ func (worker *linkWorker) waitBeaconInterval(interval time.Duration) bool {
 	case <-time.After(interval):
 		return false
 	}
-}
-
-// rangeCandidates 从 lastPort 起向上生成 helperCount+rangeNeighborhood 个
-// 候选（回绕在 [1024,65535] 端口空间内），严格递增无重复。
-//
-// 只向上：helper 的映射在画像之后创建，顺序分配的 NAT 把它排在最后观测
-// 端口的上方。步长取 1 而非观测间隔：若该 NAT 按间隔 s>1 分配，步长 1
-// 仍能覆盖前 helperCount/s 个 helper，好过任何更窄的窗口；按观测间隔外推
-// 命中是保留的扩展点（见设计文档 08 后续优化路线），真机数据不足前不做。
-func rangeCandidates(lastPort common.Port, helperCount int) []int {
-	count := helperCount + rangeNeighborhood
-	candidates := make([]int, 0, count)
-	for offset := 1; offset <= count; offset++ {
-		value := portSpaceMin + ((int(lastPort)-portSpaceMin+offset)%portSpaceSize+portSpaceSize)%portSpaceSize
-		candidates = append(candidates, value)
-	}
-	return candidates
 }
 
 // startReceiver 启动单个 socket 的接收循环（锁外包装）。
@@ -856,11 +918,23 @@ func (worker *linkWorker) startReceiverLocked(socket *net.UDPConn, id common.Soc
 
 // sendPunch 从指定 socket 发一条 PUNCH 并登记 punchSent（ACK 校验用）。
 func (worker *linkWorker) sendPunch(socket *net.UDPConn, id common.SocketID, target *net.UDPAddr) {
+	worker.sendPunchRecorded(socket, id, target, punchSentRecord{sentAt: time.Now()})
+}
+
+// sendScanPunch 发一个三级扫描候选并登记阶段元数据（命中溯源用）。
+func (worker *linkWorker) sendScanPunch(socket *net.UDPConn, id common.SocketID, target *net.UDPAddr, candidate scanCandidate, global int) {
+	worker.sendPunchRecorded(socket, id, target, punchSentRecord{
+		stage: candidate.Stage, ordinal: candidate.Ordinal, global: global, sentAt: time.Now(),
+	})
+}
+
+// sendPunchRecorded 编码发送并登记。
+func (worker *linkWorker) sendPunchRecorded(socket *net.UDPConn, id common.SocketID, target *net.UDPAddr, record punchSentRecord) {
 	punch := common.P2PControl{Type: common.P2PTypePunch, Token: worker.token, SenderSocketID: id}
 	if encoded, err := common.MarshalP2PControl(punch); err == nil {
 		_, _ = socket.WriteToUDP(encoded, target)
 	}
-	worker.recordPunchSent(id, target)
+	worker.recordPunchSent(id, target, record)
 }
 
 // deliverFrame 是入站 GTUN 帧的验证链，全部通过才投递数据面并刷新保活：
@@ -1004,23 +1078,44 @@ func (worker *linkWorker) sendPing(sequence uint32) {
 	}
 }
 
-// recordPunchSent / punchSentFrom 维护「本 socket 曾向谁发过 PUNCH」。
-func (worker *linkWorker) recordPunchSent(id common.SocketID, target *net.UDPAddr) {
+// recordPunchSent / lookupPunchSent / punchSentFrom 维护「本 socket 曾向谁
+// 发过 PUNCH」。
+func (worker *linkWorker) recordPunchSent(id common.SocketID, target *net.UDPAddr, record punchSentRecord) {
 	key := punchSentKey{localSocket: id, port: target.Port}
 	copy(key.ip[:], target.IP.To4())
 	worker.punchSentMu.Lock()
-	worker.punchSent[key] = struct{}{}
+	worker.punchSent[key] = record
 	worker.punchSentMu.Unlock()
 }
 
-// punchSentFrom 查询「本 socket 是否向该来源发过 PUNCH」（ACK 校验用）。
-func (worker *linkWorker) punchSentFrom(id common.SocketID, source *net.UDPAddr) bool {
+// lookupPunchSent 返回该来源的发送记录（命中溯源用）。
+func (worker *linkWorker) lookupPunchSent(id common.SocketID, source *net.UDPAddr) (punchSentRecord, bool) {
 	key := punchSentKey{localSocket: id, port: source.Port}
 	copy(key.ip[:], source.IP.To4())
 	worker.punchSentMu.Lock()
 	defer worker.punchSentMu.Unlock()
-	_, ok := worker.punchSent[key]
+	record, ok := worker.punchSent[key]
+	return record, ok
+}
+
+// punchSentFrom 查询「本 socket 是否向该来源发过 PUNCH」（ACK 校验用）。
+func (worker *linkWorker) punchSentFrom(id common.SocketID, source *net.UDPAddr) bool {
+	_, ok := worker.lookupPunchSent(id, source)
 	return ok
+}
+
+// notePredictionHit 在入站报文通过 punchSent 校验后调用：来源端口若出自
+// 三级扫描候选，这次入站就是预测命中的直接证据，记观察日志并镜像一行到
+// 主日志（低频高价值）。kind 标注入站类型（punch/ack），仅日志用。
+// 临时观察设施，随 scanlog.go 一并删除。
+func (worker *linkWorker) notePredictionHit(id common.SocketID, source *net.UDPAddr, kind string) {
+	record, ok := worker.lookupPunchSent(id, source)
+	if !ok || record.stage == 0 {
+		return
+	}
+	scanHit(record.stage, record.ordinal, source.Port, time.Since(record.sentAt))
+	worker.log.Info("prediction hit", "kind", kind,
+		"stage", record.stage.String(), "ordinal", record.ordinal, "global", record.global, "port", source.Port)
 }
 
 // mainSocketRef 在锁内取主 socket 引用；已关闭（finish 置 nil）返回 nil，
