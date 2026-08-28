@@ -105,20 +105,16 @@ func (manager *Manager) ApplyConfig(config *common.NetworkConfig) {
 		manager.log.Info("no network; data stack closed")
 		return
 	}
-	stack, reason, err := openDataStack(manager.opener, manager.routeTable, manager.config, config.Network, manager.serverIP(), manager.log)
-	if err != nil {
-		manager.stackFailureReason = reason
-		manager.log.Error("open data stack failed", "error", err)
+	if !manager.tryOpenStackLocked() {
 		// 幸存者的 UDP 隧道虽在，但没有数据面就无法承载流量：
 		// 停止并如实上报，不装活。
 		for peeringID, worker := range survivors {
-			manager.emitFailure(peeringID, worker.token, reason)
+			manager.emitFailure(peeringID, worker.token, manager.stackFailureReason)
 			manager.stopWorker(peeringID)
 		}
 		return
 	}
-	manager.stackFailureReason = ""
-	manager.stack = stack
+	stack := manager.stack
 	// 已建成的幸存者重新挂接到新数据面；打洞中的不用处理——
 	// 建成事件到达时挂的是当前栈。
 	for peeringID, worker := range survivors {
@@ -129,6 +125,29 @@ func (manager *Manager) ApplyConfig(config *common.NetworkConfig) {
 		}
 	}
 	manager.log.Info("stack rebuilt", "reattached", len(survivors))
+}
+
+// tryOpenStackLocked 尝试打开数据面栈（需持 mu）。栈已在时直接成功；
+// 无网络拓扑时失败。ApplyConfig（拓扑重建）与 HandleConnect（失败后
+// 重试）共用：开栈失败可能是暂时性的——典型如已被清理的路由残留——
+// 收到新的建链意图时值得再试一次，而不是停留在「重启进程才能恢复」
+// 的单次闭锁。
+func (manager *Manager) tryOpenStackLocked() bool {
+	if manager.stack != nil {
+		return true
+	}
+	if manager.network == nil || manager.network.Network == nil {
+		return false
+	}
+	stack, reason, err := openDataStack(manager.opener, manager.routeTable, manager.config, manager.network.Network, manager.serverIP(), manager.log)
+	if err != nil {
+		manager.stackFailureReason = reason
+		manager.log.Error("open data stack failed", "error", err)
+		return false
+	}
+	manager.stackFailureReason = ""
+	manager.stack = stack
+	return true
 }
 
 // workerSurvives 判断一个 Worker 能否跨过本次栈重建：本机虚拟 IP 未变、
@@ -233,16 +252,20 @@ func (manager *Manager) HandleConnect(message *common.Connect) {
 	defer manager.mu.Unlock()
 	manager.stopWorker(message.PeeringID)
 	if manager.stack == nil {
-		// 数据面未就绪：这个尝试不可能产出可用隧道，立即以真实原因
-		// 回报失败。不启动 Worker——打洞成功却装不了数据，只会让
-		// 管理页面显示一个不能用的 CONNECTED。
-		reason := manager.stackFailureReason
-		if reason == "" {
-			reason = common.ReasonTUNCreateFailed
+		// 数据面未就绪：先重试一次开栈——失败可能是暂时性的（残留已被
+		// 清理、上次的接口拆除已完成）。重开仍失败才立即以真实原因回报
+		// 失败，不启动 Worker——打洞成功却装不了数据，只会让管理页面
+		// 显示一个不能用的 CONNECTED。
+		if !manager.tryOpenStackLocked() {
+			reason := manager.stackFailureReason
+			if reason == "" {
+				reason = common.ReasonTUNCreateFailed
+			}
+			manager.emitFailure(message.PeeringID, message.Token, reason)
+			manager.log.Warn("connect rejected: data stack not ready", "peering_id", string(message.PeeringID), "reason", string(reason))
+			return
 		}
-		manager.emitFailure(message.PeeringID, message.Token, reason)
-		manager.log.Warn("connect rejected: data stack not ready", "peering_id", string(message.PeeringID), "reason", string(reason))
-		return
+		manager.log.Info("data stack recovered on connect", "peering_id", string(message.PeeringID))
 	}
 	manager.workers[message.PeeringID] = startLinkWorker(
 		manager.config, manager.device, message.Token, message.PeeringID, message.Peer,

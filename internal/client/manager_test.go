@@ -1,6 +1,8 @@
 package client
 
 import (
+	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"net/netip"
@@ -10,6 +12,7 @@ import (
 	"time"
 
 	"gtun-lite/internal/common"
+	"gtun-lite/internal/tun"
 )
 
 // testLog 返回静默日志。
@@ -321,6 +324,51 @@ func TestConnectRejectedWhenStackNil(t *testing.T) {
 	if len(manager.workers) != 0 {
 		t.Fatal("no worker should be started without a data stack")
 	}
+}
+
+// recoveringOpener 前若干次 Open 失败（模拟暂时性开栈故障，如尚未清掉的
+// 路由残留），之后成功：驱动「CONNECT 触发栈重试」路径。
+type recoveringOpener struct {
+	fakeOpener
+	failures int
+}
+
+func (opener *recoveringOpener) Open(ctx context.Context, name string, mtu int, localIP common.IPv4, peers []common.IPv4) (tun.Device, tun.RouteCleanup, error) {
+	if opener.failures > 0 {
+		opener.failures--
+		return nil, tun.RouteCleanup{}, errors.New("simulated transient open failure")
+	}
+	return opener.fakeOpener.Open(ctx, name, mtu, localIP, peers)
+}
+
+// TestConnectRetriesStackOpen 开栈失败不闭锁：下一次 CONNECT 会重试开栈，
+// 暂时性故障恢复后无需重启进程即可继续建链。
+func TestConnectRetriesStackOpen(t *testing.T) {
+	opener := &recoveringOpener{failures: 1}
+	manager := NewManager(testManagerConfig(), common.GenerateDeviceID(), opener, fakeRouteTable{}, testLog())
+	peering := common.GeneratePeeringID()
+	manager.ApplyConfig(networkWithPeer(t, peering))
+	if manager.stack != nil || manager.stackFailureReason != common.ReasonTUNCreateFailed {
+		t.Fatalf("expected failed first open, got stack=%v reason=%q", manager.stack != nil, manager.stackFailureReason)
+	}
+
+	manager.HandleConnect(&common.Connect{
+		Type: common.MessageConnect, Token: common.GenerateLinkToken(), PeeringID: peering,
+		Peer: common.ConnectPeer{DeviceID: common.GenerateDeviceID(), Name: "p", IP: "10.200.0.2"},
+	})
+	if manager.stack == nil {
+		t.Fatal("stack must be reopened on connect after transient failure")
+	}
+	if worker, ok := manager.workers[peering]; !ok || worker == nil {
+		t.Fatal("worker must start after stack recovery")
+	}
+	// 恢复路径不产生失败上报（事件通道里不该有本次 CONNECT 的失败）。
+	select {
+	case event := <-manager.Events():
+		t.Fatalf("unexpected failure event on recovered path: %+v", event)
+	default:
+	}
+	manager.Close()
 }
 
 // conflictingRouteTable 是永远报本机地址冲突的路由表：驱动 preflight 失败路径。
