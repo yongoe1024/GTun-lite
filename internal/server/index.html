@@ -66,6 +66,7 @@
   .chip.connecting { color: var(--amber); border-color: #e8d9a8; background: #fff8e6; }
   .chip.connected { color: var(--accent); border-color: #bcd9c6; background: #eef7f1; }
   .fail-reason { font: 12px ui-monospace, monospace; color: var(--red); margin-top: 2px; }
+  .status-on { color: var(--accent); }
 
   .btn {
     font: 14px system-ui, sans-serif; padding: 3px 12px; border: 1px solid #c9c9c3;
@@ -415,8 +416,8 @@ function renderLinks() {
     <tr>
       <td class="num">${i + 1}</td>
       <td class="mono">${esc(l.network_id)}</td>
-      <td>${onlineDot(l.online_a)}${esc(l.name_a)} <span class="mono hint">${esc(shortId(l.device_a, 8))}</span><div class="mono hint">${esc(l.virtual_ip_a)}</div></td>
-      <td>${onlineDot(l.online_b)}${esc(l.name_b)} <span class="mono hint">${esc(shortId(l.device_b, 8))}</span><div class="mono hint">${esc(l.virtual_ip_b)}</div></td>
+      <td>${esc(l.name_a)} <span class="mono hint">${esc(shortId(l.device_a, 8))}</span><div class="mono hint">${esc(l.virtual_ip_a)} · <span class="${l.online_a ? 'status-on' : ''}">${l.online_a ? '在线' : '离线'}</span></div></td>
+      <td>${esc(l.name_b)} <span class="mono hint">${esc(shortId(l.device_b, 8))}</span><div class="mono hint">${esc(l.virtual_ip_b)} · <span class="${l.online_b ? 'status-on' : ''}">${l.online_b ? '在线' : '离线'}</span></div></td>
       <td><span class="chip ${esc(l.state.toLowerCase())}">${esc(l.state)}</span>${l.last_reason ? `<div class="fail-reason" title="上次尝试的失败原因：${esc(l.last_reason)}">${esc(reasonText[l.last_reason] || l.last_reason)}</div>` : ''}</td>
       <td class="mono">${l.token ? esc(l.token) : '<span class="hint">—</span>'}</td>
       <td class="mono" title="${esc(l.updated_at)}">${isZeroTime(l.updated_at)
