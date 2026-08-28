@@ -53,7 +53,7 @@ func (opener) Open(_ context.Context, name string, mtu int, localIP common.IPv4,
 	// 必须先置非阻塞再 os.NewFile：只有非阻塞 fd 才被 runtime poller 接管，
 	// Close 才能唤醒阻塞的读循环、优雅退出不卡死（与 Linux 同源，Go 文档化
 	// 行为）。「非阻塞进 poller 后 kqueue 不投递事件、数据面全死」的旧项目
-	// 观察已复验推翻（2026-08-27，实验档案见 设计文档/10-真机验收记录.md）。
+	// 观察已复验推翻（2026-08-27，实验档案见 test/e2e/真机验收记录.md）。
 	if err := syscall.SetNonblock(fd, true); err != nil {
 		syscall.Close(fd)
 		return nil, tun.RouteCleanup{}, fmt.Errorf("set utun nonblocking: %w", err)

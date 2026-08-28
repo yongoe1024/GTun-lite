@@ -111,7 +111,7 @@ type Opener interface {
 
 ### 4.4 两平台共同教训：fd 必须先非阻塞再 NewFile
 
-阻塞 fd 交给 `os.NewFile` 不会进入 Go runtime poller，`Close()` 无法唤醒阻塞中的读循环——优雅退出永久卡死在 `wg.Wait()`（Go 文档化行为，golang/go#22939；Linux 阻塞 fd × Close 对照实验 ≥2s 不归）。macOS 曾因此用「阻塞读 + 弃置 goroutine」绕路，2026-08-27 对照实验推翻「非阻塞进 poller 后 kqueue 不投递事件」的旧观察后已统一切换为非阻塞 + poller，弃置机制（readerAbandoner 全套）删除。实验档案见 [10-真机验收记录.md](10-真机验收记录.md)。
+阻塞 fd 交给 `os.NewFile` 不会进入 Go runtime poller，`Close()` 无法唤醒阻塞中的读循环——优雅退出永久卡死在 `wg.Wait()`（Go 文档化行为，golang/go#22939；Linux 阻塞 fd × Close 对照实验 ≥2s 不归）。macOS 曾因此用「阻塞读 + 弃置 goroutine」绕路，2026-08-27 对照实验推翻「非阻塞进 poller 后 kqueue 不投递事件」的旧观察后已统一切换为非阻塞 + poller，弃置机制（readerAbandoner 全套）删除。实验档案见 [真机验收记录.md](../test/e2e/真机验收记录.md)。
 
 ## 5. 路由体系
 
