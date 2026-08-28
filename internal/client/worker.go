@@ -9,9 +9,12 @@ import (
 	"log/slog"
 	"net"
 	"net/netip"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"golang.org/x/net/ipv4"
 
 	"gtun-lite/internal/common"
 )
@@ -953,6 +956,48 @@ func (worker *linkWorker) SendFrame(_ context.Context, frame []byte) error {
 	}
 	_, err := socket.WriteToUDP(frame, peer)
 	return err
+}
+
+// SendBatch 实现 tun.WorkerLink：批量发送出站帧。
+// Linux 上用 x/net 的 WriteBatch（底层 sendmmsg）一次系统调用发多帧；
+// macOS/Windows 没有 sendmmsg，保持逐包 WriteToUDP——与改造前行为
+// 完全一致。批量路径任何错误（含部分成功）都回落逐包发送，绝不丢帧。
+func (worker *linkWorker) SendBatch(_ context.Context, frames [][]byte) error {
+	worker.dataMu.Lock()
+	socket, peer := worker.p2pSocket, worker.peerLive
+	worker.dataMu.Unlock()
+	if socket == nil || peer == nil {
+		return errors.New("worker not connected")
+	}
+	if len(frames) == 0 {
+		return nil
+	}
+	if runtime.GOOS != "linux" {
+		for _, frame := range frames {
+			if _, err := socket.WriteToUDP(frame, peer); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	packet := ipv4.NewPacketConn(socket)
+	msgs := make([]ipv4.Message, 0, len(frames))
+	for _, frame := range frames {
+		msgs = append(msgs, ipv4.Message{Addr: peer, Buffers: [][]byte{frame}})
+	}
+	sent, err := packet.WriteBatch(msgs, 0)
+	if err == nil && sent == len(msgs) {
+		return nil
+	}
+	if err == nil {
+		msgs = msgs[sent:] // 部分成功：剩余帧回落逐包
+	}
+	for _, msg := range msgs {
+		if _, err := socket.WriteToUDP(msg.Buffers[0], msg.Addr.(*net.UDPAddr)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // sendPing 在选定路径上发保活 PING。sequence 仅抓包对账用，见 GTUNFrame.Sequence。

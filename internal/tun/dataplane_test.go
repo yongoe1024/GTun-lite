@@ -78,6 +78,7 @@ type fakeWorkerLink struct {
 	mu      sync.Mutex
 	sent    [][]byte
 	sendErr error
+	batches int // SendBatch 调用次数
 }
 
 func (l *fakeWorkerLink) AttemptToken() common.LinkToken    { return l.token }
@@ -89,6 +90,19 @@ func (l *fakeWorkerLink) SendFrame(_ context.Context, frame []byte) error {
 		return l.sendErr
 	}
 	l.sent = append(l.sent, append([]byte(nil), frame...))
+	return nil
+}
+
+func (l *fakeWorkerLink) SendBatch(_ context.Context, frames [][]byte) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.sendErr != nil {
+		return l.sendErr
+	}
+	l.batches++
+	for _, frame := range frames {
+		l.sent = append(l.sent, append([]byte(nil), frame...))
+	}
 	return nil
 }
 
@@ -235,4 +249,39 @@ func TestDataPlaneOutboundQueueFullDrops(t *testing.T) {
 		device.mu.Unlock()
 	}
 	time.Sleep(50 * time.Millisecond)
+}
+
+// TestOutboundBatchGroupsFrames 攒批验证：一次注入 40 帧（队列容量 64），
+// 全部送达且 SendBatch 调用次数少于帧数（发生了批量，而非逐帧一次调用）。
+func TestOutboundBatchGroupsFrames(t *testing.T) {
+	device := newFakeDevice(1280)
+	dp, err := NewDataPlane(device, DataPlaneConfig{TUNMTU: 1280, OutboundQueuePackets: 64, InboundQueuePackets: 4}, "10.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dp.Start()
+	t.Cleanup(func() { _ = dp.Close() })
+	link := &fakeWorkerLink{token: "111111111111", peer: netip.AddrPortFrom(netip.MustParseAddr("10.0.0.2"), 40000)}
+	if err := dp.RegisterLink(link, "10.0.0.2"); err != nil {
+		t.Fatal(err)
+	}
+	const frames = 40
+	device.mu.Lock()
+	for i := 0; i < frames; i++ {
+		device.reads = append(device.reads, makeValidIPv4("10.0.0.1", "10.0.0.2"))
+	}
+	device.mu.Unlock()
+	deadline := time.Now().Add(2 * time.Second)
+	for len(link.sentSnapshot()) < frames {
+		if time.Now().After(deadline) {
+			t.Fatalf("expected %d sent frames, got %d", frames, len(link.sentSnapshot()))
+		}
+		time.Sleep(time.Millisecond)
+	}
+	link.mu.Lock()
+	batches := link.batches
+	link.mu.Unlock()
+	if batches < 2 {
+		t.Fatalf("expected batching (>=2 SendBatch calls for %d frames), got %d", frames, batches)
+	}
 }

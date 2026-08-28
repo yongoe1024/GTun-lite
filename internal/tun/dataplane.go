@@ -25,6 +25,10 @@ type WorkerLink interface {
 	PeerLive() (*netip.AddrPort, bool)
 	// SendFrame 编码并经由 p2p_socket 发送一帧到 peer_live。
 	SendFrame(ctx context.Context, frame []byte) error
+	// SendBatch 批量发送一批出站帧；平台差异（Linux 批量化、其余逐包
+	// 等价）由实现负责。失败语义与 SendFrame 一致：失败即丢，由上层
+	// 协议（内层 TCP 重传）承担。
+	SendBatch(ctx context.Context, frames [][]byte) error
 }
 
 // DataPlaneConfig 是数据面的不可变配置。
@@ -239,35 +243,70 @@ func (dp *DataPlane) tunReadLoop() {
 	}
 }
 
-// outboundSender 从 Worker 出站队列取包，编码 GTUN 帧并发送到 peer_live。
+// outboundBatchSize 是出站攒批上限：队列非空时一次取满这批帧再发送，
+// Linux 上对应一次 sendmmsg 系统调用。只在包已在队列里时攒批，绝不
+// 为凑批等待——不引入任何额外延迟。
+const outboundBatchSize = 32
+
+// outboundSender 从 Worker 出站队列取包，编码 GTUN 帧并批量发送到 peer_live。
+// 攒批：收到一个包后非阻塞 drain 队列（至多 outboundBatchSize 帧），一次
+// SendBatch——Linux 上即一次 sendmmsg，减少高 pps 下的系统调用与内核切换。
 // 以 outbound 通道关闭或数据面 ctx 取消为退出信号。
 func (dp *DataPlane) outboundSender(queue *workerQueue) {
 	defer dp.wg.Done()
 	var sequence uint32
+	batch := make([][]byte, 0, outboundBatchSize)
+	flush := func() {
+		if len(batch) == 0 {
+			return
+		}
+		if err := queue.link.SendBatch(dp.ctx, batch); err != nil {
+			// 发送失败会在 Worker 停止前对每个包重复，节流到每秒一条；
+			// 持续失败由保活超时（≤60s）收敛，日志只需指明方向。
+			if throttled(&dp.lastSendFailLog) {
+				dp.log.Warn("send batch failed; packets being dropped", "peer", queue.peerIP.String(), "error", err.Error())
+			}
+		}
+		batch = batch[:0]
+	}
+	encode := func(packet []byte) {
+		frame, err := common.EncodeGTUNFrame(queue.link.AttemptToken(), sequence, packet, dp.config.TUNMTU)
+		if err != nil {
+			// 编码拒绝的典型原因是包大于 TUNMTU（TUN 读循环的缓冲决定
+			// 了不该出现这种包）；静默跳过曾让"对端收不到大包"无从排查。
+			dp.log.Warn("GTUN frame encoding rejected; packet dropped", "peer", queue.peerIP.String(), "size", len(packet), "mtu", dp.config.TUNMTU, "error", err.Error())
+			return
+		}
+		sequence++
+		batch = append(batch, frame)
+	}
 	for {
 		select {
 		case packet, ok := <-queue.outbound:
 			if !ok {
+				flush()
 				dp.log.Debug("outbound sender exited; queue closed", "peer", queue.peerIP.String())
 				return
 			}
-			frame, err := common.EncodeGTUNFrame(queue.link.AttemptToken(), sequence, packet, dp.config.TUNMTU)
-			if err != nil {
-				// 编码拒绝的典型原因是包大于 TUNMTU（TUN 读循环的缓冲决定
-				// 了不该出现这种包）；静默跳过曾让"对端收不到大包"无从排查。
-				dp.log.Warn("GTUN frame encoding rejected; packet dropped", "peer", queue.peerIP.String(), "size", len(packet), "mtu", dp.config.TUNMTU, "error", err.Error())
-				continue
-			}
-			sequence++
-			if err := queue.link.SendFrame(dp.ctx, frame); err != nil {
-				// 发送失败会在 Worker 停止前对每个包重复，节流到每秒一条；
-				// 持续失败由保活超时（≤60s）收敛，日志只需指明方向。
-				if throttled(&dp.lastSendFailLog) {
-					dp.log.Warn("send frame failed; packets being dropped", "peer", queue.peerIP.String(), "error", err.Error())
+			encode(packet)
+			// 队列非空时继续 drain，攒满一批再发；空队列立即 flush（不等待）。
+		drain:
+			for len(batch) < outboundBatchSize {
+				select {
+				case more, ok := <-queue.outbound:
+					if !ok {
+						flush()
+						dp.log.Debug("outbound sender exited; queue closed", "peer", queue.peerIP.String())
+						return
+					}
+					encode(more)
+				default:
+					break drain
 				}
-				continue
 			}
+			flush()
 		case <-dp.ctx.Done():
+			flush()
 			dp.log.Debug("outbound sender exited; data plane closing", "peer", queue.peerIP.String())
 			return
 		}
