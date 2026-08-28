@@ -27,7 +27,7 @@ VIP_B=10.206.0.2   # Debian
 echo "== 构建与部署 =="
 make -C "$ROOT" build-darwin-arm64 build-linux >/dev/null
 $SSH 'mkdir -p /root/gtun-accept'
-scp -q "$ROOT/bin/linux/gtun-client" "$SSH_TARGET:/root/gtun-accept/"
+scp -q "$ROOT/bin/linux/client/gtun-client" "$SSH_TARGET:/root/gtun-accept/"
 
 echo "== 配置（yaml 全量生成，避免 sed 改注释行的脆弱性）=="
 rm -rf "$RUN"; mkdir -p "$RUN/server" "$RUN/a"
@@ -67,11 +67,11 @@ sudo pkill -TERM -x gtun-client 2>/dev/null || true
 pkill -TERM -x gtun-server 2>/dev/null || true
 $SSH 'pkill -x -TERM gtun-client 2>/dev/null' || true
 sleep 1
-(cd "$RUN/server" && nohup "$ROOT/bin/darwin-arm64/gtun-server" -config server.yaml > server.log 2>&1 < /dev/null & echo $! > "$RUN/server.pid")
+(cd "$RUN/server" && nohup "$ROOT/bin/darwin-arm64/server/gtun-server" -config server.yaml > server.log 2>&1 < /dev/null & echo $! > "$RUN/server.pid")
 sleep 1
 curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:9090/ready | grep -q 200 || { echo "FAIL: 服务器未就绪"; tail -3 "$RUN/server/server.log"; exit 1; }
 $SSH 'cd /root/gtun-accept && (setsid nohup ./gtun-client -config client.yaml > client.log 2>&1 < /dev/null &)'
-sudo sh -c "cd $RUN/a && (nohup $ROOT/bin/darwin-arm64/gtun-client -config client.yaml > client.log 2>&1 < /dev/null & echo \$! > $RUN/a/client.pid)"
+sudo sh -c "cd $RUN/a && (nohup $ROOT/bin/darwin-arm64/client/gtun-client -config client.yaml > client.log 2>&1 < /dev/null & echo \$! > $RUN/a/client.pid)"
 sleep 3
 
 cleanup() {

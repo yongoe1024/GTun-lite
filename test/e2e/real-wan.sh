@@ -33,7 +33,7 @@ WAN_HOST=${WAN_SSH_TARGET#*@}
 echo "== 构建与部署 =="
 make -C "$ROOT" build-darwin-arm64 build-linux >/dev/null
 $WAN_SSH "mkdir -p $WAN_DIR"
-scp -q "$ROOT/bin/linux/gtun-server" "$ROOT/bin/linux/gtun-client" "$WAN_SSH_TARGET:$WAN_DIR/"
+scp -q "$ROOT/bin/linux/server/gtun-server" "$ROOT/bin/linux/client/gtun-client" "$WAN_SSH_TARGET:$WAN_DIR/"
 
 echo "== 配置（端口基值 $BASE_PORT，避开服务器上既有服务的 10000/9090）=="
 rm -rf "$RUN"; mkdir -p "$RUN/a"
@@ -79,7 +79,7 @@ $WAN_SSH "cd $WAN_DIR && rm -f gtun.db && (setsid nohup ./gtun-server -config se
 sleep 1
 $WAN_SSH "curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:19090/ready" | grep -q 200 || { echo "FAIL: 公网服务器未就绪"; $WAN_SSH "tail -3 $WAN_DIR/server.log"; exit 1; }
 $WAN_SSH "cd $WAN_DIR && (setsid nohup ./gtun-client -config client.yaml > node.log 2>&1 < /dev/null &)"
-sudo sh -c "cd $RUN/a && (nohup $ROOT/bin/darwin-arm64/gtun-client -config client.yaml > client.log 2>&1 < /dev/null & echo \$! > $RUN/a/client.pid)"
+sudo sh -c "cd $RUN/a && (nohup $ROOT/bin/darwin-arm64/client/gtun-client -config client.yaml > client.log 2>&1 < /dev/null & echo \$! > $RUN/a/client.pid)"
 sleep 3
 
 cleanup() {
