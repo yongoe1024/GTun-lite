@@ -290,8 +290,6 @@ function renderDevices() {
       <td>${onlineDot(d.online)}${d.online ? '在线' : '离线'}</td>
       <td class="mono">${d.network_id ? esc(d.network_id) : '<span class="hint">—</span>'}</td>
       <td class="ops">
-        <button class="btn" data-action="query" data-id="${esc(d.device_id)}"
-          ${d.online ? 'title="下发 QUERY，设备随后上报链路状态"' : 'disabled title="设备离线：QUERY 只发给在线设备"'}>查询</button>
         <button class="btn warn" data-action="del-device" data-id="${esc(d.device_id)}"
           title="需先停止其客户端并移出网络">删除</button>
       </td>
@@ -460,13 +458,6 @@ $('#main').addEventListener('click', async e => {
   const d = btn.dataset;
   try {
     switch (d.action) {
-      case 'query': {
-        await call('POST', `/api/devices/${d.id}/query`);
-        setMsg(`QUERY 已下发，设备将随后上报；结果体现在链路视图`, 'ok');
-        refresh();
-        setTimeout(refresh, 1500);
-        break;
-      }
       case 'del-device': {
         if (!confirm(`删除设备 ${d.id} ？\n（须先停止其客户端，且已移出网络）`)) return;
         await call('DELETE', `/api/devices/${d.id}`);
