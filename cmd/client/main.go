@@ -55,12 +55,14 @@ func run() int {
 	// 调大硬上限，或换个小的档位；程序自己绝不降档。
 	if err := client.EnsureHelperFDHeadroom(config.Punch.HelperCount); err != nil {
 		log.Error("helper fd headroom", "error", err)
+		window.Printf("启动失败（helper 文件描述符预算不足）：%v", err)
 		return 1
 	}
 
 	identity, err := client.LoadIdentity(config.Identity.Path)
 	if err != nil {
 		log.Error("load identity", "error", err)
+		window.Printf("启动失败（设备身份加载失败）：%v", err)
 		return 1
 	}
 
