@@ -40,8 +40,8 @@ func startTestServer(t *testing.T, adjust ...func(*ServerConfig)) *testServer {
 	config := DefaultServerConfig()
 	config.Control.Bind = "127.0.0.1:0"
 	// 心跳超时压到亚秒级、注册超时压到 1s，让失活与超时用例不必真等。
-	// 这里直接构造配置对象，绕过 LoadServerConfig 的「至少 40s」校验——
-	// 那条校验约束的是生产配置里心跳与超时的比例关系，不是机制本身。
+	// 直接构造配置对象不经过 LoadServerConfig：这里测的是机制本身，
+	// 不必满足生产配置的范围与交叉校验（全量必填、容量下限等）。
 	config.Control.HeartbeatTimeout = 500 * time.Millisecond
 	config.Control.RegisterTimeout = 1 * time.Second
 	for _, mutate := range adjust {
