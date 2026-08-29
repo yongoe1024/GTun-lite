@@ -28,7 +28,7 @@ func TestLoadClientConfigDefaults(t *testing.T) {
 	if config.Probe.Timeout != 30*time.Second || config.Probe.PerPortTimeout != time.Second || config.Probe.Retries != 3 {
 		t.Fatalf("unexpected probe defaults: %+v", config.Probe)
 	}
-	if config.Punch.StableTimeout != 5*time.Second || config.Punch.VariableTimeout != 15*time.Second || config.Punch.HelperCount != 256 {
+	if config.Punch.StableTimeout != 2*time.Second || config.Punch.VariableTimeout != 15*time.Second || config.Punch.HelperCount != 256 {
 		t.Fatalf("unexpected punch defaults: %+v", config.Punch)
 	}
 	if config.Server.ProbeBasePort != 10000 {

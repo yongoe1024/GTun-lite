@@ -22,7 +22,7 @@ probe:
   per_port_timeout: 1s          # 1s×4次×5端口=20s，装得进 30s 总预算
   retries: 3                   # 每端口重试次数（含首次共 4 发）
 punch:
-  stable_timeout: 5s           # stable-stable 直连预算（成功仅需 2~3 个 RTT）
+  stable_timeout: 2s           # stable-stable 直连预算（成功仅需 2~3 个 RTT；输竞态靠服务器重连重掷，2s 零入站即死局）
   variable_timeout: 15s        # 涉 variable（Range+helper）预算
   helper_count: 256            # 256 / 512 / 1024 三档，其他值拒绝启动
 logging:

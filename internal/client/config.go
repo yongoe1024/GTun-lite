@@ -158,7 +158,9 @@ func (config *ClientConfig) applyDefaults() {
 		config.Probe.Retries = 3
 	}
 	if config.Punch.StableTimeout == 0 {
-		config.Punch.StableTimeout = 5 * time.Second
+		// 2s：健康握手 2~3 个 RTT 绰绰有余；竞态死局（双向零入站）2s 即可
+		// 判定，早离场交给服务器重连重掷（配自动重试单周期 ~7s）。
+		config.Punch.StableTimeout = 2 * time.Second
 	}
 	if config.Punch.VariableTimeout == 0 {
 		config.Punch.VariableTimeout = 15 * time.Second
