@@ -40,13 +40,20 @@ func TestClassifyProfileVariable(t *testing.T) {
 	}
 }
 
-// TestClassifyProfileIPChanged 公网 IP 不一致 → PROBE_IP_CHANGED。
-// 家宽按流轮换出口 IP 时端口画像没有意义，必须拒绝而不是拿去打洞。
+// TestClassifyProfileIPChanged 公网 IP 不一致不再拒绝：与 p2p 同口径，
+// 一律取首个回显 IP 当固定值，端口分类照常。轮换仅由调用方留痕。
 func TestClassifyProfileIPChanged(t *testing.T) {
 	samples := responses("203.0.113.7", 40000, 40000, 40000, 40000, 40000)
 	samples[4].PublicIP = "198.51.100.9"
-	if _, reason := classifyProfile(samples, nil); reason != common.ReasonProbeIPChanged {
-		t.Fatalf("expected PROBE_IP_CHANGED, got %q", reason)
+	profile, reason := classifyProfile(samples, nil)
+	if reason != "" {
+		t.Fatalf("expected no failure, got %q", reason)
+	}
+	if profile.PublicIP != "203.0.113.7" {
+		t.Fatalf("expected first-observed IP 203.0.113.7, got %q", string(profile.PublicIP))
+	}
+	if profile.NAT != common.NATStable {
+		t.Fatalf("expected NATStable by port consistency, got %q", profile.NAT)
 	}
 }
 

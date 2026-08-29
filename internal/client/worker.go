@@ -335,26 +335,35 @@ func (worker *linkWorker) probe(serverIP net.IP) (common.NATProfile, common.Reas
 		worker.log.Debug("probe port answered", "port", target.Port, "public_ip", string(response.PublicIP), "mapped_port", int(response.MappedPort))
 	}
 	profile, reason := classifyProfile(responses, observed)
-	if reason == common.ReasonProbeIPChanged {
-		// 画像失败必须带观察样本（同端口超时路径的理由）：出口 IP 轮换
-		// 没有样本时只能靠服务器侧抓包反推（公网真机测试的教训）。
-		worker.log.Warn("probe observed rotating public IPs", "observed", joinObserved(observed))
-		return common.NATProfile{}, reason
+	if ipChanged := profileIPChanged(responses); ipChanged {
+		// 不再因 IP 轮换失败：与 p2p 项目同口径，取首个回显 IP 当固定值
+		// 继续打洞。轮换仍要留痕（带观察样本，公网排障只能靠它），
+		// 但判定权交给真机测试而不是探测层。
+		worker.log.Warn("probe observed rotating public IPs, using first", "public_ip", string(profile.PublicIP), "observed", joinObserved(observed))
 	}
 	// 画像是打洞策略的全部依据，公网排障第一件事就是看这两行。
 	worker.log.Debug("nat profile observed", "nat", profile.NAT, "public_ip", string(profile.PublicIP), "ports", fmt.Sprintf("%v", profile.Ports))
 	return profile, reason
 }
 
-// classifyProfile 把五份回显组装成画像：IP 一致性检查 + 端口分类。
+// profileIPChanged 报告五份回显是否存在公网 IP 不一致（仅用于日志留痕）。
+func profileIPChanged(responses []common.ProbeResponse) bool {
+	publicIP := responses[0].PublicIP
+	for _, response := range responses[1:] {
+		if response.PublicIP != publicIP {
+			return true
+		}
+	}
+	return false
+}
+
+// classifyProfile 把五份回显组装成画像：公网 IP 一律取首个回显（不校验
+// 一致性，出口轮换由调用方留痕放行）+ 端口分类。
 func classifyProfile(responses []common.ProbeResponse, observed []string) (common.NATProfile, common.Reason) {
 	publicIP := responses[0].PublicIP
 	ports := make([]common.Port, len(responses))
 	stable := true
 	for index, response := range responses {
-		if response.PublicIP != publicIP {
-			return common.NATProfile{}, common.ReasonProbeIPChanged
-		}
 		ports[index] = response.MappedPort
 		if ports[index] != ports[0] {
 			stable = false
