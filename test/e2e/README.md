@@ -15,6 +15,7 @@
 |---|---|---|
 | `real-lan.sh <本机LAN_IP> <debian_ssh>` | 本机做服务端 + 本机/Debian 双客户端（同网段，无 NAT） | 双侧 punch connected、双向 ping 零丢、双向 8MB MD5、保活 70s |
 | `real-wan.sh <公网ssh> [端口基值] [身份种子]` | 公网服务器做服务端（兼第二客户端），本机穿真实 NAT 打过去 | 双侧 punch connected、双向 ping 零丢、2MB MD5（CONNECT 自动重试，容忍出口 IP 轮换） |
+| `natlab.sh <本机LAN_IP> <debian_ssh> [A..E]` | Debian 单机 netns 五档 NAT 矩阵（conntrack 两档 + 用户态 pf 档两档 + 全 conntrack 对照），服务端跑本机 | 链路建成/如实拒绝、双侧 punch connected、双向 ping 零丢；gtun-scan.log 归档（打洞级观察） |
 
 两脚本任一校验失败即非零退出；需要本机免密 sudo、两台 ssh 目标免密 root。
 
