@@ -201,10 +201,21 @@ type PeeringRow struct {
 // RFC3339 是 SQLite TEXT 时间戳的事实标准，字典序与时间序一致。
 func nowRFC3339() string { return time.Now().UTC().Format(time.RFC3339) }
 
-// UpsertDevice 注册即 upsert：新设备插入，老设备刷新 name 与 platform。
-// 设备身份由客户端持久持有，服务器不生成也不修改它。
-// 单条消息上限是全局常量（见 common.MaxControlMessageBytes），不做每设备
-// 配置位：上限挡的是错误对端与超长行，与设备是谁无关。
+// HasDevice 报告设备是否已在库里（即已通过注册审批）。审批制下注册
+// 不落库，只有管理页「同意注册」后才有行；这是注册分流与入网校验的依据。
+func (store *Store) HasDevice(ctx context.Context, id common.DeviceID) (bool, error) {
+	var exists bool
+	err := store.db.QueryRowContext(ctx,
+		`SELECT EXISTS (SELECT 1 FROM devices WHERE device_id = ?)`, string(id)).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("check device: %w", err)
+	}
+	return exists, nil
+}
+
+// UpsertDevice 落库一台设备（注册审批通过时调用），库里已有则刷新
+// name 与 platform。设备身份由客户端持久持有，服务器不生成也不修改它。
+// 未审批的设备不进这里——它们只存在于 hub 的内存 pending 表。
 func (store *Store) UpsertDevice(ctx context.Context, id common.DeviceID, name, platform string) error {
 	_, err := store.db.ExecContext(ctx, `
 		INSERT INTO devices (device_id, name, platform, created_at) VALUES (?, ?, ?, ?)
@@ -216,8 +227,9 @@ func (store *Store) UpsertDevice(ctx context.Context, id common.DeviceID, name, 
 	return nil
 }
 
-// DeleteDevice 删除设备行。调用方负责前置检查：设备必须已离开网络、
-// 且控制连接不在线（在线客户端重连时会 upsert 复活该行）。
+// DeleteDevice 删除设备行，外键级联清掉其网络成员关系与配对。调用方
+// （admin_api.deleteDevice）负责清内存状态并对受影响对端重推配置；
+// 在线设备由调用方先踢下线。未落库（未审批）的设备删到这里返回 ErrNotFound。
 func (store *Store) DeleteDevice(ctx context.Context, id common.DeviceID) error {
 	result, err := store.db.ExecContext(ctx, `DELETE FROM devices WHERE device_id = ?`, string(id))
 	if err != nil {

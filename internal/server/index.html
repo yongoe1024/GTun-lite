@@ -180,8 +180,7 @@ const codeText = {
   network_full: '网络成员已满',
   address_exhausted: '网段内地址耗尽',
   not_members: '两台设备不都是本网络成员',
-  still_member: '设备仍在网络中，请先移出',
-  device_online: '设备控制连接在线，请先停止其客户端',
+  not_approved: '设备尚未同意注册，请先在待加入列表批准',
   peer_offline: '对端离线',
   internal_error: '服务器内部错误',
 };
@@ -286,7 +285,23 @@ const table = (cols, rows) =>
   `<tbody>${rows || `<tr><td class="empty" colspan="${cols.length}">0 行</td></tr>`}</tbody></table>`;
 
 function renderDevices() {
-  const rows = state.devices.map((d, i) => `
+  const pending = state.devices.filter(d => d.pending);
+  const approved = state.devices.filter(d => !d.pending);
+
+  const pendingRows = pending.map((d, i) => `
+    <tr>
+      <td class="num">${i + 1}</td>
+      <td class="mono" title="${esc(d.device_id)}">${esc(shortId(d.device_id, 13))}</td>
+      <td>${esc(d.name)}</td>
+      <td class="mono">${esc(d.platform)}</td>
+      <td>${onlineDot(d.online)}在线</td>
+      <td class="ops">
+        <button class="btn" data-action="approve-device" data-id="${esc(d.device_id)}"
+          data-name="${esc(d.name)}">同意注册</button>
+      </td>
+    </tr>`).join('');
+
+  const rows = approved.map((d, i) => `
     <tr>
       <td class="num">${i + 1}</td>
       <td class="mono" title="${esc(d.device_id)}">${esc(shortId(d.device_id, 13))}</td>
@@ -296,13 +311,23 @@ function renderDevices() {
       <td class="mono">${d.network_id ? esc(d.network_id) : '<span class="hint">—</span>'}</td>
       <td class="ops">
         <button class="btn warn" data-action="del-device" data-id="${esc(d.device_id)}"
-          title="需先停止其客户端并移出网络">删除</button>
+          title="同时删除其网络成员关系与配对，在线设备将被踢下线">删除</button>
       </td>
     </tr>`).join('');
-  return `
+
+  const pendingSection = `
     <section>
       <div class="viewbar">
-        <span class="hint">已注册设备列表。在线状态实时取自会话表，所属网络取自成员表，其余字段来自设备注册信息。</span>
+        <span class="hint">新注册待审批的设备（实时在线状态，仅存内存，断开即消失）。同意后才能加入网络；删除未同意设备无需操作，其断开后自动消失。</span>
+      </div>
+      ${table(['#', '设备 ID', '名称', '平台', '在线', '操作'], pendingRows)}
+    </section>`;
+
+  return `
+    ${pendingSection}
+    <section>
+      <div class="viewbar">
+        <span class="hint">已同意注册的设备。在线状态实时取自会话表，所属网络取自成员表，其余字段来自设备注册信息（存 SQLite）。</span>
       </div>
       ${table(['#', '设备 ID', '名称', '平台', '在线', '所属网络', '操作'], rows)}
     </section>`;
@@ -369,7 +394,7 @@ function renderNetwork() {
       </td>
     </tr>`).join('');
 
-  const candidates = state.devices.filter(v => !v.network_id);
+  const candidates = state.devices.filter(v => !v.pending && !v.network_id);
   const memberOptions = (selected) => (d.members || []).map(m =>
     `<option value="${esc(m.device_id)}" ${m.device_id === selected ? 'selected' : ''}>` +
     `${esc(m.device_name)} · ${esc(m.virtual_ip)}</option>`).join('');
@@ -390,7 +415,7 @@ function renderNetwork() {
           <option value="">选择未入网设备…</option>
           ${candidates.map(v =>
             `<option value="${esc(v.device_id)}">${esc(v.name)} · ${esc(v.platform)} · ${esc(shortId(v.device_id, 8))}</option>`).join('')}
-          ${candidates.length ? '' : '<option value="">（没有可加入的设备：要么全部已在网，要么尚未注册）</option>'}
+          ${candidates.length ? '' : '<option value="">（没有可加入的设备：要么全部已在网，要么没有已批准的设备）</option>'}
         </select>
         <button class="btn" ${candidates.length ? '' : 'disabled'}>加入成员</button>
       </form>
@@ -466,8 +491,15 @@ $('#main').addEventListener('click', async e => {
   const d = btn.dataset;
   try {
     switch (d.action) {
+      case 'approve-device': {
+        if (!confirm(`同意设备 ${d.name}（${shortId(d.id, 8)}）的注册？\n同意后即可加入网络。`)) return;
+        await call('POST', `/api/devices/${d.id}/approve`);
+        setMsg('设备已同意注册', 'ok');
+        refresh();
+        break;
+      }
       case 'del-device': {
-        if (!confirm(`删除设备 ${d.id} ？\n（须先停止其客户端，且已移出网络）`)) return;
+        if (!confirm(`删除设备 ${d.id} ？\n其网络成员关系与配对将级联删除，在线设备会被踢下线。`)) return;
         await call('DELETE', `/api/devices/${d.id}`);
         setMsg('设备已删除', 'ok');
         refresh();

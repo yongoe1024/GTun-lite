@@ -51,6 +51,7 @@ func (api *AdminAPI) Routes() *http.ServeMux {
 	mux.HandleFunc("GET /{$}", api.index)
 	mux.HandleFunc("GET /ready", api.ready)
 	mux.HandleFunc("GET /api/devices", api.listDevices)
+	mux.HandleFunc("POST /api/devices/{device_id}/approve", api.approveDevice)
 	mux.HandleFunc("DELETE /api/devices/{device_id}", api.deleteDevice)
 	mux.HandleFunc("GET /api/networks", api.listNetworks)
 	mux.HandleFunc("POST /api/networks", api.createNetwork)
@@ -283,6 +284,17 @@ func (api *AdminAPI) addMember(writer http.ResponseWriter, request *http.Request
 		return
 	} else if !errors.Is(err, ErrNotFound) {
 		writeError(writer, http.StatusInternalServerError, "internal_error", err.Error())
+		return
+	}
+	// 注册审批制：未批准的设备只存在于内存待审批表，库里没有行，
+	// 不能入网。显式拒绝而不是等外键违约报 500。
+	approved, err := api.store.HasDevice(request.Context(), device)
+	if err != nil {
+		writeError(writer, http.StatusInternalServerError, "internal_error", err.Error())
+		return
+	}
+	if !approved {
+		writeError(writer, http.StatusConflict, "not_approved", "device has not been approved; approve its registration first")
 		return
 	}
 	count, err := api.store.CountMembers(request.Context(), id)
@@ -605,31 +617,79 @@ func (api *AdminAPI) queryDevice(writer http.ResponseWriter, request *http.Reque
 // deleteDevice 删除设备行。两道前置检查都是「操作要么完整要么不做」：
 // 在网设备先移出网络（否则级联删除成员与配对，产生静默的配置变更）；
 // 在线设备先停客户端（否则它重连时 upsert 会把行复活）。
+// approveDevice 把待审批设备落库为正式设备（注册审批制）。
+// 幂等语义由 hub 保证：不在待审批表（未注册、已断开、已批准）→ 404。
+func (api *AdminAPI) approveDevice(writer http.ResponseWriter, request *http.Request) {
+	device, err := common.ParseDeviceID(request.PathValue("device_id"))
+	if err != nil {
+		writeError(writer, http.StatusBadRequest, "invalid_device_id", err.Error())
+		return
+	}
+	if err := api.hub.ApproveDevice(request.Context(), device); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			writeError(writer, http.StatusNotFound, "not_found", "no pending registration for this device")
+			return
+		}
+		writeError(writer, http.StatusInternalServerError, "internal_error", err.Error())
+		return
+	}
+	writeJSON(writer, http.StatusOK, map[string]string{"status": "approved"})
+}
+
+// deleteDevice 删除设备并级联清退：外键级联清掉网络成员关系与配对，
+// 内存链路状态同步清除，受影响对端重推新配置，在线设备踢下线。
+// 未审批设备不在库里 → 404（待加入列表没有删除操作，断开即消失）。
 func (api *AdminAPI) deleteDevice(writer http.ResponseWriter, request *http.Request) {
 	device, err := common.ParseDeviceID(request.PathValue("device_id"))
 	if err != nil {
 		writeError(writer, http.StatusBadRequest, "invalid_device_id", err.Error())
 		return
 	}
-	if _, err := api.store.Membership(request.Context(), device); err == nil {
-		writeError(writer, http.StatusConflict, "still_member", "device belongs to a network; remove it from the network first")
-		return
-	} else if !errors.Is(err, ErrNotFound) {
+	// 删除前收集清退上下文：设备至多属于一个网络（device_id UNIQUE），
+	// 其配对与受影响对端在删除之后就查不全了。
+	member, err := api.store.Membership(request.Context(), device)
+	if err != nil && !errors.Is(err, ErrNotFound) {
 		writeError(writer, http.StatusInternalServerError, "internal_error", err.Error())
 		return
+	}
+	var peers []common.DeviceID
+	var pruned []common.Link
+	if err == nil {
+		peerings, err := api.store.ListPeerings(request.Context(), member.NetworkID)
+		if err != nil {
+			writeError(writer, http.StatusInternalServerError, "internal_error", err.Error())
+			return
+		}
+		for _, peering := range peerings {
+			if peering.DeviceA != device && peering.DeviceB != device {
+				continue
+			}
+			if link, err := common.NewLink(peering.DeviceA, peering.DeviceB); err == nil {
+				pruned = append(pruned, link)
+			}
+			other := peering.DeviceB
+			if peering.DeviceB == device {
+				other = peering.DeviceA
+			}
+			peers = append(peers, other)
+		}
+	}
+	if err := api.store.DeleteDevice(request.Context(), device); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			writeError(writer, http.StatusNotFound, "not_found", "no such device")
+			return
+		}
+		writeError(writer, http.StatusInternalServerError, "internal_error", err.Error())
+		return
+	}
+	if len(pruned) > 0 {
+		api.hub.PruneLinks(request.Context(), pruned)
+	}
+	for _, peer := range peers {
+		api.hub.PushConfig(request.Context(), peer)
 	}
 	if api.hub.IsOnline(request.Context(), device) {
-		writeError(writer, http.StatusConflict, "device_online", "device control connection is online; stop its client first")
-		return
-	}
-	err = api.store.DeleteDevice(request.Context(), device)
-	if errors.Is(err, ErrNotFound) {
-		writeError(writer, http.StatusNotFound, "not_found", "no such device")
-		return
-	}
-	if err != nil {
-		writeError(writer, http.StatusInternalServerError, "internal_error", err.Error())
-		return
+		_ = api.hub.Kick(request.Context(), device)
 	}
 	writeJSON(writer, http.StatusOK, map[string]string{"status": "deleted"})
 }

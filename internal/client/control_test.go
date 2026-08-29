@@ -293,6 +293,15 @@ func waitOnline(t *testing.T, adminURL, device string) {
 	t.Fatalf("device %s never came online", device)
 }
 
+// approveDevice 把设备审批落库（注册审批制：注册不落库，入网前必须批准）。
+func approveDevice(t *testing.T, adminURL, device string) {
+	t.Helper()
+	status, body := admin(t, http.MethodPost, adminURL, "/api/devices/"+device+"/approve", nil)
+	if status != http.StatusOK {
+		t.Fatalf("approve device %s: %d %v", device, status, body)
+	}
+}
+
 // linkState 轮询链路视图直到达到期望状态。
 func waitLinkState(t *testing.T, adminURL, deviceA, deviceB, want string) map[string]any {
 	t.Helper()
@@ -328,6 +337,8 @@ func TestEndToEndPunch(t *testing.T) {
 	waitOnline(t, adminURL, string(idA))
 	waitOnline(t, adminURL, string(idB))
 
+	approveDevice(t, adminURL, string(idA))
+	approveDevice(t, adminURL, string(idB))
 	status, body := admin(t, http.MethodPost, adminURL, "/api/networks", map[string]string{"name": "e2e", "cidr": "10.201.0.0/24"})
 	if status != http.StatusCreated {
 		t.Fatalf("create network: %d %v", status, body)
@@ -454,6 +465,8 @@ func TestEndToEndDataPath(t *testing.T) {
 	waitOnline(t, adminURL, string(idA))
 	waitOnline(t, adminURL, string(idB))
 
+	approveDevice(t, adminURL, string(idA))
+	approveDevice(t, adminURL, string(idB))
 	status, body := admin(t, http.MethodPost, adminURL, "/api/networks", map[string]string{"name": "data", "cidr": "10.202.0.0/24"})
 	if status != http.StatusCreated {
 		t.Fatalf("create network: %d %v", status, body)
@@ -513,6 +526,7 @@ func TestConfigSwapRebuildsStack(t *testing.T) {
 	waitOnline(t, adminURL, string(idA))
 	waitOnline(t, adminURL, string(idB))
 
+	approveDevice(t, adminURL, string(idA))
 	status, body := admin(t, http.MethodPost, adminURL, "/api/networks", map[string]string{"name": "swap", "cidr": "10.203.0.0/24"})
 	if status != http.StatusCreated {
 		t.Fatalf("create network: %d %v", status, body)
@@ -556,6 +570,9 @@ func TestTunnelSurvivesTopologyChange(t *testing.T) {
 	waitOnline(t, adminURL, string(idB))
 	waitOnline(t, adminURL, string(idC))
 
+	approveDevice(t, adminURL, string(idA))
+	approveDevice(t, adminURL, string(idB))
+	approveDevice(t, adminURL, string(idC))
 	status, body := admin(t, http.MethodPost, adminURL, "/api/networks", map[string]string{"name": "tri", "cidr": "10.204.0.0/24"})
 	if status != http.StatusCreated {
 		t.Fatalf("create network: %d %v", status, body)
@@ -718,6 +735,8 @@ func TestServerRestartTunnelSurvivesAndRebuilt(t *testing.T) {
 	waitOnline(t, rs.adminURL, string(idA))
 	waitOnline(t, rs.adminURL, string(idB))
 
+	approveDevice(t, rs.adminURL, string(idA))
+	approveDevice(t, rs.adminURL, string(idB))
 	status, body := admin(t, http.MethodPost, rs.adminURL, "/api/networks", map[string]string{"name": "p0", "cidr": "10.205.0.0/24"})
 	if status != http.StatusCreated {
 		t.Fatalf("create network: %d %v", status, body)

@@ -172,6 +172,7 @@ func adminCall(t *testing.T, server *testServer, method, path string, body any) 
 }
 
 // fixtureNetwork 建网、拉两台成员、配对，返回网络 ID 与配对 ID。
+// 注册审批制：入网前先把两台设备批准落库。
 func fixtureNetwork(t *testing.T, server *testServer, deviceA, deviceB common.DeviceID) (common.NetworkID, common.PeeringID) {
 	t.Helper()
 	status, body := adminCall(t, server, http.MethodPost, "/api/networks", map[string]string{"name": "testnet", "cidr": "10.200.0.0/24"})
@@ -180,6 +181,10 @@ func fixtureNetwork(t *testing.T, server *testServer, deviceA, deviceB common.De
 	}
 	network := common.NetworkID(body["id"].(string))
 	for _, device := range []common.DeviceID{deviceA, deviceB} {
+		status, body = adminCall(t, server, http.MethodPost, "/api/devices/"+string(device)+"/approve", nil)
+		if status != http.StatusOK {
+			t.Fatalf("approve device %s: %d %v", device, status, body)
+		}
 		status, body = adminCall(t, server, http.MethodPost, "/api/networks/"+string(network)+"/members", map[string]string{"device_id": string(device)})
 		if status != http.StatusCreated {
 			t.Fatalf("add member %s: %d %v", device, status, body)
@@ -344,10 +349,11 @@ func TestInvariantTwoConnectRejectedWhenOffline(t *testing.T) {
 	clientA := dial(t, server, deviceA)
 	defer clientA.conn.Close()
 	// B 注册入网后断开连接：配对存在、B 离线——这正是「单侧离线」的现场。
+	// 审批入网要在 B 在线时完成（待审批是纯内存实时状态，断开即消失）。
 	clientB := dial(t, server, deviceB)
 	clientB.read(2*time.Second, common.MessageNetworkConfig)
-	_ = clientB.conn.Close()
 	_, peering := fixtureNetwork(t, server, deviceA, deviceB)
+	_ = clientB.conn.Close()
 	waitOffline(t, server, deviceB)
 
 	status, body := adminCall(t, server, http.MethodPost, "/api/links/connect",
@@ -817,8 +823,9 @@ func TestProbeReflectorEchoes(t *testing.T) {
 	t.Fatal("reflector did not echo a valid PORT response")
 }
 
-// TestDeleteDevice 删设备的三条路径：在网拒绝（先移出网络）、在线拒绝
-// （先停客户端，否则重连 upsert 复活）、离线且不在网 → 删除成功。
+// TestDeleteDevice 删设备的新语义（注册审批制）：无前置条件的级联清退。
+// 待审批设备不在库里 → 404；批准后在线删除 → 踢下线并从列表消失；
+// 重复删除 → 404。
 func TestDeleteDevice(t *testing.T) {
 	server := startTestServer(t)
 	device := common.GenerateDeviceID()
@@ -826,18 +833,22 @@ func TestDeleteDevice(t *testing.T) {
 	defer client.conn.Close()
 	client.read(2*time.Second, common.MessageNetworkConfig)
 
-	// 在线 → 409 device_online。
+	// 待审批（只存内存，未落库）→ 404。
 	status, body := adminCall(t, server, http.MethodDelete, "/api/devices/"+string(device), nil)
-	if status != http.StatusConflict || body["code"] != "device_online" {
-		t.Fatalf("online device must be rejected, got %d %v", status, body)
+	if status != http.StatusNotFound || body["code"] != "not_found" {
+		t.Fatalf("pending device must 404, got %d %v", status, body)
 	}
-	// 断开后删除 → 200，且设备从列表消失。
-	_ = client.conn.Close()
-	waitOffline(t, server, device)
+	// 批准 → 在设备列表（正式设备）出现。
+	status, body = adminCall(t, server, http.MethodPost, "/api/devices/"+string(device)+"/approve", nil)
+	if status != http.StatusOK {
+		t.Fatalf("approve device: %d %v", status, body)
+	}
+	// 在线删除 → 200，会话被踢下线，列表消失。
 	status, body = adminCall(t, server, http.MethodDelete, "/api/devices/"+string(device), nil)
 	if status != http.StatusOK {
-		t.Fatalf("offline device must be deletable, got %d %v", status, body)
+		t.Fatalf("online device must be deletable, got %d %v", status, body)
 	}
+	waitOffline(t, server, device)
 	status, body = adminCall(t, server, http.MethodGet, "/api/devices", nil)
 	for _, entry := range body["devices"].([]any) {
 		if entry.(map[string]any)["device_id"] == string(device) {
@@ -851,21 +862,102 @@ func TestDeleteDevice(t *testing.T) {
 	}
 }
 
-// TestDeleteMemberDeviceRejected 在网设备删除被拒（先移出网络）。
-func TestDeleteMemberDeviceRejected(t *testing.T) {
+// TestDeleteMemberDeviceCascades 删除在网设备：成员关系与配对级联删除，
+// 剩余成员收到重推的新配置，设备会话被踢下线。
+func TestDeleteMemberDeviceCascades(t *testing.T) {
 	server := startTestServer(t)
 	deviceA, deviceB := common.GenerateDeviceID(), common.GenerateDeviceID()
 	clientA := dial(t, server, deviceA)
+	defer clientA.conn.Close()
+	clientA.read(2*time.Second, common.MessageNetworkConfig)
 	clientB := dial(t, server, deviceB)
-	defer func() { _ = clientA.conn.Close(); _ = clientB.conn.Close() }()
+	defer clientB.conn.Close()
 	clientB.read(2*time.Second, common.MessageNetworkConfig)
-	_ = clientB.conn.Close()
-	waitOffline(t, server, deviceB)
-	fixtureNetwork(t, server, deviceA, deviceB) // B 已注册入网
+	network, _ := fixtureNetwork(t, server, deviceA, deviceB)
 
 	status, body := adminCall(t, server, http.MethodDelete, "/api/devices/"+string(deviceB), nil)
-	if status != http.StatusConflict || body["code"] != "still_member" {
-		t.Fatalf("member device must be rejected with still_member, got %d %v", status, body)
+	if status != http.StatusOK {
+		t.Fatalf("member device must be deletable, got %d %v", status, body)
+	}
+	// B 的会话被踢；A 收到重推的新配置。
+	waitOffline(t, server, deviceB)
+	updated := clientA.read(2*time.Second, common.MessageNetworkConfig).(*common.NetworkConfig)
+	if updated.Network == nil {
+		t.Fatal("expected repushed config after peer deletion")
+	}
+	for _, peer := range updated.Network.Peers {
+		if peer.DeviceID == deviceB {
+			t.Fatal("deleted device must disappear from the repushed config")
+		}
+	}
+	// 库里：成员只剩 A，配对清空。
+	status, body = adminCall(t, server, http.MethodGet, "/api/networks/"+string(network), nil)
+	if status != http.StatusOK {
+		t.Fatalf("network detail: %d %v", status, body)
+	}
+	if got := len(body["members"].([]any)); got != 1 {
+		t.Fatalf("expected 1 member after cascade delete, got %d", got)
+	}
+	// ListPeerings 空结果返回 nil 切片，JSON 里是 null，须 nil 安全断言。
+	if peerings, _ := body["peerings"].([]any); len(peerings) != 0 {
+		t.Fatalf("expected 0 peerings after cascade delete, got %d", len(peerings))
+	}
+}
+
+// TestRegistrationApprovalFlow 注册审批制全流程：新设备只进内存待加入
+// 列表（pending 且在线），未批准入网被拒；批准后落库为正式设备，可入网。
+func TestRegistrationApprovalFlow(t *testing.T) {
+	server := startTestServer(t)
+	device := common.GenerateDeviceID()
+	client := dial(t, server, device)
+	defer client.conn.Close()
+	client.read(2*time.Second, common.MessageNetworkConfig)
+
+	// 待加入列表：pending=true、恒在线。
+	status, body := adminCall(t, server, http.MethodGet, "/api/devices", nil)
+	if status != http.StatusOK {
+		t.Fatalf("list devices: %d %v", status, body)
+	}
+	var row map[string]any
+	for _, entry := range body["devices"].([]any) {
+		if entry.(map[string]any)["device_id"] == string(device) {
+			row = entry.(map[string]any)
+		}
+	}
+	if row == nil || row["pending"] != true || row["online"] != true {
+		t.Fatalf("new device must be pending and online, got %v", row)
+	}
+
+	// 未批准 → 入网被拒。
+	status, body = adminCall(t, server, http.MethodPost, "/api/networks",
+		map[string]string{"name": "appr", "cidr": "10.208.0.0/24"})
+	if status != http.StatusCreated {
+		t.Fatalf("create network: %d %v", status, body)
+	}
+	network := body["id"].(string)
+	status, body = adminCall(t, server, http.MethodPost, "/api/networks/"+network+"/members",
+		map[string]string{"device_id": string(device)})
+	if status != http.StatusConflict || body["code"] != "not_approved" {
+		t.Fatalf("unapproved device must be rejected with not_approved, got %d %v", status, body)
+	}
+
+	// 批准 → 落库为正式设备（pending=false），可入网。
+	status, body = adminCall(t, server, http.MethodPost, "/api/devices/"+string(device)+"/approve", nil)
+	if status != http.StatusOK {
+		t.Fatalf("approve device: %d %v", status, body)
+	}
+	status, body = adminCall(t, server, http.MethodGet, "/api/devices", nil)
+	for _, entry := range body["devices"].([]any) {
+		if entry.(map[string]any)["device_id"] == string(device) {
+			if entry.(map[string]any)["pending"] != false {
+				t.Fatal("approved device must no longer be pending")
+			}
+		}
+	}
+	status, body = adminCall(t, server, http.MethodPost, "/api/networks/"+network+"/members",
+		map[string]string{"device_id": string(device)})
+	if status != http.StatusCreated {
+		t.Fatalf("add member after approve: %d %v", status, body)
 	}
 }
 
@@ -893,6 +985,10 @@ func TestAddMemberResponseComplete(t *testing.T) {
 		t.Fatalf("create network: %d %v", status, body)
 	}
 	network := body["id"].(string)
+	status, _ = adminCall(t, server, http.MethodPost, "/api/devices/"+string(device)+"/approve", nil)
+	if status != http.StatusOK {
+		t.Fatalf("approve device: %d", status)
+	}
 	status, body = adminCall(t, server, http.MethodPost, "/api/networks/"+network+"/members",
 		map[string]string{"device_id": string(device)})
 	if status != http.StatusCreated {

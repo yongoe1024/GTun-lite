@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"sort"
 	"sync"
 	"time"
 
@@ -82,6 +83,16 @@ type hubState struct {
 	// 都到齐时，服务器把对方的画像发给每一侧，随后清掉条目。
 	// 条目随 IssueConnect 重建：新尝试的画像不与旧尝试的混放。
 	pending map[common.Link]*pendingProfiles
+	// pendingDevices 是已注册但未通过审批的设备（注册审批制）：只有
+	// name/platform，纯内存实时状态——在线即存在（会话建立时写入），
+	// 断开即消失。管理页「同意注册」才把它落库为正式设备。
+	pendingDevices map[common.DeviceID]deviceRegistration
+}
+
+// deviceRegistration 是待审批设备的注册信息快照，来自其注册报文。
+type deviceRegistration struct {
+	Name     string
+	Platform string
 }
 
 // pendingProfiles 是一次尝试的画像收集状态。token 与链路当前 token
@@ -131,9 +142,10 @@ func NewHub(store *Store, config ServerConfig, log *slog.Logger) *Hub {
 func (owner *Hub) run() {
 	defer close(owner.done)
 	state := &hubState{
-		sessions: make(map[common.DeviceID]*session),
-		links:    make(map[common.Link]*Link),
-		pending:  make(map[common.Link]*pendingProfiles),
+		sessions:       make(map[common.DeviceID]*session),
+		links:          make(map[common.Link]*Link),
+		pending:        make(map[common.Link]*pendingProfiles),
+		pendingDevices: make(map[common.DeviceID]deviceRegistration),
 	}
 	for {
 		select {
@@ -189,16 +201,26 @@ func (owner *Hub) Register(ctx context.Context, sess *session, registration *com
 	return failure
 }
 
-// register 是注册的 owner 内实现。顶替顺序：先落库，再顶旧会话，最后入表——
-// 任何一步失败都不产生半注册状态。
+// register 是注册的 owner 内实现。顶替顺序：先落库（或记待审批），再顶旧
+// 会话，最后入表——任何一步失败都不产生半注册状态。
 func (owner *Hub) register(state *hubState, sess *session, registration *common.DeviceRegister) error {
-	// 会话容量在落库前检查：容量之外的连接不该在库里留下设备行。
+	// 会话容量在登记前检查：容量之外的连接不该留下任何设备痕迹。
 	// 重连的旧设备不受影响——顶替替换的是既有表项，不增加条目。
 	if _, exists := state.sessions[sess.device]; !exists && len(state.sessions) >= owner.config.Control.MaxConnections {
 		return fmt.Errorf("%w: %d sessions in use", ErrConnectionLimit, owner.config.Control.MaxConnections)
 	}
-	if err := owner.store.UpsertDevice(context.Background(), registration.DeviceID, registration.Name, registration.Platform); err != nil {
-		return fmt.Errorf("persist device: %w", err)
+	// 注册审批制：库里已有的设备（此前被同意过）照常 upsert 刷新；
+	// 新设备不落库，只记入内存待审批表，等管理页「同意注册」。
+	approved, err := owner.store.HasDevice(context.Background(), registration.DeviceID)
+	if err != nil {
+		return fmt.Errorf("check device approved: %w", err)
+	}
+	if approved {
+		if err := owner.store.UpsertDevice(context.Background(), registration.DeviceID, registration.Name, registration.Platform); err != nil {
+			return fmt.Errorf("persist device: %w", err)
+		}
+	} else {
+		state.pendingDevices[sess.device] = deviceRegistration{Name: registration.Name, Platform: registration.Platform}
 	}
 	if previous, replaced := state.sessions[sess.device]; replaced && previous != sess {
 		// 顶替：给旧连接发 duplicate_login 并在其写出后关闭。注意不能在这里
@@ -211,7 +233,7 @@ func (owner *Hub) register(state *hubState, sess *session, registration *common.
 		owner.log.Warn("device re-registered; previous session replaced", "device_id", string(sess.device))
 	}
 	state.sessions[sess.device] = sess
-	owner.log.Info("device registered", "device_id", string(sess.device), "name", registration.Name, "platform", registration.Platform)
+	owner.log.Info("device registered", "device_id", string(sess.device), "name", registration.Name, "platform", registration.Platform, "approved", approved)
 	// 确认先于首份配置入队：客户端的注册握手在等到 device_registered 后
 	// 才开始等 network_config，顺序颠倒会让握手把配置当成乱序消息拒掉。
 	// 两条消息走同一发送队列，入队顺序即线上顺序。
@@ -227,6 +249,10 @@ func (owner *Hub) SessionEnded(ctx context.Context, sess *session) {
 	_ = owner.submit(ctx, func(state *hubState) {
 		if current, ok := state.sessions[sess.device]; ok && current == sess {
 			delete(state.sessions, sess.device)
+			// 待审批设备是纯内存实时状态：断开即从待加入列表消失，
+			// 重连会重新出现。只清当前会话的——被顶替的旧会话退出时
+			// 条目属于新会话，不能误删。
+			delete(state.pendingDevices, sess.device)
 			owner.log.Info("device offline", "device_id", string(sess.device))
 		}
 	})
@@ -522,6 +548,40 @@ func (owner *Hub) issueDisconnect(state *hubState, pair common.Link) error {
 	return nil
 }
 
+// ApproveDevice 把待审批设备落库为正式设备（管理页「同意注册」）。
+// 待审批是纯内存实时状态：设备不在线即条目不存在，无从批准（ErrNotFound）。
+// 批准只改变「能不能入网」，不改变配置——无成员设备的全量配置本来就是空。
+func (owner *Hub) ApproveDevice(ctx context.Context, device common.DeviceID) error {
+	var failure error
+	err := owner.submit(ctx, func(state *hubState) {
+		entry, ok := state.pendingDevices[device]
+		if !ok {
+			failure = ErrNotFound
+			return
+		}
+		if err := owner.store.UpsertDevice(context.Background(), device, entry.Name, entry.Platform); err != nil {
+			failure = fmt.Errorf("persist approved device: %w", err)
+			return
+		}
+		delete(state.pendingDevices, device)
+		owner.log.Info("device approved", "device_id", string(device), "name", entry.Name)
+	})
+	if err != nil {
+		return err
+	}
+	return failure
+}
+
+// Kick 终结设备的当前控制会话（删除在线设备时调用）。设备不在线则无事可做。
+// 客户端会按重连间隔重试；已批准设备重连照常，已删除设备回到待审批。
+func (owner *Hub) Kick(ctx context.Context, device common.DeviceID) error {
+	return owner.submit(ctx, func(state *hubState) {
+		if sess, online := state.sessions[device]; online {
+			sess.end()
+		}
+	})
+}
+
 // IsOnline 查询设备控制连接是否在线（管理操作前置检查用）。
 func (owner *Hub) IsOnline(ctx context.Context, device common.DeviceID) bool {
 	online := false
@@ -649,6 +709,9 @@ type DeviceView struct {
 	Name     string          `json:"name"`
 	Platform string          `json:"platform"`
 	Online   bool            `json:"online"`
+	// Pending 为 true 表示已注册但未通过审批：只存在于内存待审批表，
+	// 恒在线（断开即消失），不能入网。false 即已落库的正式设备。
+	Pending bool `json:"pending"`
 	// NetworkID 空串=不属于任何网络，与项目「空串即无」惯例一致。
 	NetworkID common.NetworkID `json:"network_id"`
 }
@@ -698,6 +761,17 @@ func (owner *Hub) Snapshot(ctx context.Context) ([]DeviceView, []LinkView, error
 			_, online := state.sessions[row.ID]
 			devices = append(devices, DeviceView{ID: row.ID, Name: row.Name, Platform: row.Platform, Online: online, NetworkID: networkID})
 		}
+		// 待审批设备追加在正式设备之后，按 ID 排序保证输出稳定
+		// （map 遍历无序，管理页与测试都需要确定性）。
+		pendingIDs := make([]common.DeviceID, 0, len(state.pendingDevices))
+		for id := range state.pendingDevices {
+			pendingIDs = append(pendingIDs, id)
+		}
+		sort.Slice(pendingIDs, func(i, j int) bool { return pendingIDs[i] < pendingIDs[j] })
+		for _, id := range pendingIDs {
+			entry := state.pendingDevices[id]
+			devices = append(devices, DeviceView{ID: id, Name: entry.Name, Platform: entry.Platform, Online: true, Pending: true})
+		}
 		networks, err := owner.store.ListNetworks(context.Background())
 		if err != nil {
 			owner.log.Error("list networks for snapshot", "error", err)
@@ -719,11 +793,11 @@ func (owner *Hub) Snapshot(ctx context.Context) ([]DeviceView, []LinkView, error
 				// 读路径不建条目：没有内存记录的链路就是 IDLE（零值），
 				// GET /api/links 不得往状态表里写东西。
 				view := LinkView{
-					NetworkID:  network.ID,
-					PeeringID:  peering.PeeringID,
-					DeviceA:    pair[0], NameA: peering.NameA, VirtualIPA: peering.VirtualIPA, OnlineA: onlineA,
-					DeviceB:    pair[1], NameB: peering.NameB, VirtualIPB: peering.VirtualIPB, OnlineB: onlineB,
-					State:      LinkIdle.String(),
+					NetworkID: network.ID,
+					PeeringID: peering.PeeringID,
+					DeviceA:   pair[0], NameA: peering.NameA, VirtualIPA: peering.VirtualIPA, OnlineA: onlineA,
+					DeviceB: pair[1], NameB: peering.NameB, VirtualIPB: peering.VirtualIPB, OnlineB: onlineB,
+					State: LinkIdle.String(),
 				}
 				if record, exists := state.links[pair]; exists {
 					view.State = record.State.String()

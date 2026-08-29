@@ -158,6 +158,10 @@ func fixtureNetworkWithCIDR(t *testing.T, server *testServer, cidr string, devic
 	}
 	network := common.NetworkID(body["id"].(string))
 	for _, device := range []common.DeviceID{deviceA, deviceB} {
+		status, body = adminCall(t, server, http.MethodPost, "/api/devices/"+string(device)+"/approve", nil)
+		if status != http.StatusOK {
+			t.Fatalf("approve device %s: %d %v", device, status, body)
+		}
 		status, body = adminCall(t, server, http.MethodPost, "/api/networks/"+string(network)+"/members", map[string]string{"device_id": string(device)})
 		if status != http.StatusCreated {
 			t.Fatalf("add member %s: %d %v", device, status, body)
