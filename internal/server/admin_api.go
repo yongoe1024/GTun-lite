@@ -614,9 +614,6 @@ func (api *AdminAPI) queryDevice(writer http.ResponseWriter, request *http.Reque
 	}
 }
 
-// deleteDevice 删除设备行。两道前置检查都是「操作要么完整要么不做」：
-// 在网设备先移出网络（否则级联删除成员与配对，产生静默的配置变更）；
-// 在线设备先停客户端（否则它重连时 upsert 会把行复活）。
 // approveDevice 把待审批设备落库为正式设备（注册审批制）。
 // 幂等语义由 hub 保证：不在待审批表（未注册、已断开、已批准）→ 404。
 func (api *AdminAPI) approveDevice(writer http.ResponseWriter, request *http.Request) {
