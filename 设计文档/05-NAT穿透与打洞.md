@@ -9,7 +9,7 @@
                 selectLocalIPv4 选本机源地址（UDP connect 让内核选「通往服务器」的出口）
                 主 socket 绑定该地址
 阶段1  画像     同一 socket 向服务器 5 个探测端口各发 PROBE，收 PORT 回显
-                → 分类 stable / variable（IP 轮换不再单独拒绝，取首个回显）
+                → 分类 stable / variable
                 → WorkerProfile 事件上报服务器（服务器配对后互发 peer_profile）
 阶段2  等对端   等待服务器下发的对端画像
                 预算 = probe.timeout + max(两端 punch 超时)；超时 → PUNCH_TIMEOUT
