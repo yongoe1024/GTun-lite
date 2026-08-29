@@ -84,6 +84,37 @@ REMOTE
 
 set_nat() {
     ns=$1 t=$2
+    if [ "$t" = slirp ]; then
+        # pf 档：slirp4netns 用户态 NAT 替代 conntrack——按内网端点保留
+        # 外部端口（EIM）、未匹配入站静默丢且不留记录。需要 Debian 装
+        # slirp4netns。拆掉 l/c veth（网关不再转发），tap+静态网关顶上；
+        # 出向绑 100.64.$ns.1（Mac 的 100.64/16 回程路由覆盖）。
+        $SSH "ip netns exec natgw$ns iptables -t nat -F 2>/dev/null
+            ip -n natgw$ns link del l$ns 2>/dev/null
+            ip -n client$ns link del tap9 2>/dev/null
+            pkill -x slirp4netns 2>/dev/null
+            sleep 0.5
+            ip -n client$ns tuntap add mode tap tap9
+            ip -n client$ns addr add 10.0.$ns.100/24 dev tap9
+            ip -n client$ns link set tap9 up
+            ip -n client$ns route add default via 10.0.$ns.2
+            ip netns exec inet slirp4netns --outbound-addr=100.64.$ns.1 --netns-type=path /run/netns/client$ns tap9 >/tmp/slirp$ns.log 2>&1 &
+            sleep 1" \
+            || { echo "FAIL: natgw$ns slirp 档启动失败"; return 1; }
+        return 0
+    fi
+    # conntrack 档：若上一组合用过 slirp 档，先恢复 l/c veth 拓扑
+    $SSH "if ! ip -n natgw$ns link show l$ns >/dev/null 2>&1; then
+        ip -n client$ns link del tap9 2>/dev/null
+        pkill -x slirp4netns 2>/dev/null
+        ip link add l$ns type veth peer name c$ns
+        ip link set l$ns netns natgw$ns; ip link set c$ns netns client$ns
+        ip -n natgw$ns addr add 10.0.$ns.1/24 dev l$ns
+        ip -n natgw$ns link set l$ns up
+        ip -n client$ns addr add 10.0.$ns.100/24 dev c$ns
+        ip -n client$ns link set c$ns up
+        ip -n client$ns route add default via 10.0.$ns.1
+    fi"
     if [ "$t" = variable ]; then
         rule="MASQUERADE --random-fully"
     else
@@ -247,7 +278,7 @@ EOF
 }
 
 cleanup() {
-    $SSH "pkill -x gtun-client" 2>/dev/null
+    $SSH "pkill -x gtun-client; pkill -x slirp4netns" 2>/dev/null
     pkill -TERM -x gtun-server 2>/dev/null
 }
 trap cleanup EXIT
@@ -266,6 +297,7 @@ for c in $COMBOS; do
         A) run_combo A stable stable || FAILED=$((FAILED+1)) ;;
         B) run_combo B variable stable || FAILED=$((FAILED+1)) ;;
         C) run_combo C variable variable || FAILED=$((FAILED+1)) ;;
+        D) run_combo D variable slirp || FAILED=$((FAILED+1)) ;;
         *) echo "未知组合: $c"; FAILED=$((FAILED+1)) ;;
     esac
 done
