@@ -24,10 +24,10 @@
 - **传输测试的发送端用 python3，不要用 nc**：macOS/BSD nc 的 stdin 一到
   EOF（脚本里通常是 /dev/null）就向对端发 FIN，Debian 的 nc 把它当结束
   信号——大文件传输会假性卡在 8192 字节。这是工具陷阱，不是隧道缺陷。
-- **家庭宽带可能按流轮换出口 IP**（实测同一 socket 的五个探测包从两个
-  公网 IP 交替出去）：客户端不再以 PROBE_IP_CHANGED 拒绝——取首个回显
-  继续打洞，但真机实证此类环境打洞难成功，属环境特性；判定代码是否有
-  问题看双侧 punch connected 日志。
+- **家庭宽带可能按流轮换出口 IP**（同一 socket 的五个探测包从多个公网
+  IP 交替出去）：现行客户端不探测即拒（机制见设计文档 05 §2），真机实证
+  此类环境打洞难成功，属环境特性；判定代码是否有问题看双侧 punch
+  connected 日志。
 - **同一家庭路由器后的两台设备互打需要 hairpin**，家用路由器多不支持——
   该场景如实 PUNCH_TIMEOUT，不代表打洞代码有缺陷，跨 NAT 侧验证为准。
 - **手机热点是可靠的 variable NAT 源**（蜂窝出口为对称型）；link 角色
@@ -63,8 +63,8 @@
   哈希用 `Get-FileHash -Algorithm MD5`；随机数据用 PowerShell
   `RandomNumberGenerator`。Windows ping 的零丢判定锚定 `(0% loss)`。
 - 强杀（`taskkill /F`，模拟崩溃）后对端 /32 路由悬空残留：**2026-08-28
-  起客户端开栈前自动清理**（含中文系统 Interface 列显示「默认」的形态，
-  真机验证）；指向活跃接口的 /32 仍如实报 ROUTE_CONFLICT 交运维。
+  起客户端开栈前自动清理**（机制见设计文档 03 §5.2）；指向活跃接口的
+  /32 仍如实报 ROUTE_CONFLICT 交运维。
 - Windows 自身 mDNS（224.0.0.251）会渗入 gtun，数据面按「未注册对端」
   丢弃（Debug 日志可见），属正常防护，无需处理。
 

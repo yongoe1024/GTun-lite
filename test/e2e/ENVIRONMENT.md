@@ -52,9 +52,8 @@ icacls.exe "C:\ProgramData\ssh\administrators_authorized_keys" /inheritance:r /g
 - 账户须在管理员组（`net localgroup administrators` 核对）；
 - **sshd 会话结束会杀子进程**：长驻进程必须用
   `schtasks /Create /TN x /TR <run.cmd> /SC ONCE /RL HIGHEST` + `/Run`
-  分离，`/RL HIGHEST` 不能省（省了无提权，WintunCreateAdapter 报
-  Access denied）；
-- run.cmd 里显式重定向日志（客户端日志走 stderr）；
+  分离（为何不能省见 README 的 Windows 节）；
+- run.cmd 里显式重定向日志兜底（日志主路径是 logging 配置的文件）；
 - 部署包：exe 与 wintun.dll 同目录（`make build-windows` 产出的整包）；
 - 机器保持不睡眠。
 
