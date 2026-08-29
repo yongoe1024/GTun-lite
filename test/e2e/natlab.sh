@@ -123,6 +123,26 @@ server:
 identity:
   path: "$D/c$c/gtun-device-id"
   name: "nat-c$c"
+tun:
+  name: "gtun0"
+  mtu: 1456
+tunnel:
+  outbound_queue: 4096
+  inbound_queue: 4096
+control:
+  heartbeat_interval: 20s
+  register_timeout: 10s
+  connect_timeout: 10s
+  reconnect_interval: 5s
+  write_timeout: 5s
+probe:
+  timeout: 30s
+  per_port_timeout: 1s
+  retries: 3
+punch:
+  stable_timeout: 2s
+  variable_timeout: 15s
+  helper_count: 256
 logging:
   level: "debug"
 EOF
@@ -134,6 +154,10 @@ EOF
     cat > "$OUT/server.yaml" <<EOF
 control:
   bind: "0.0.0.0:10000"
+  register_timeout: 10s
+  heartbeat_timeout: 60s
+  write_timeout: 5s
+  max_connections: 1000
 probe:
   bind: "0.0.0.0"
   base_port: 10000
@@ -141,6 +165,12 @@ admin:
   bind: "127.0.0.1:9090"
 database:
   path: "$OUT/server/gtun.db"
+limits:
+  max_devices_per_network: 8
+  min_cidr_prefix: 24
+  max_cidr_prefix: 28
+logging:
+  level: "info"
 EOF
     mkdir -p "$OUT/server"
     (cd "$OUT/server" && nohup "$ROOT/bin/darwin-arm64/server/gtun-server" -config "$OUT/server.yaml" > "$OUT/server.log" 2>&1 < /dev/null &)

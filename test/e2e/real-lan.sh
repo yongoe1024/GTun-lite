@@ -34,6 +34,10 @@ rm -rf "$RUN"; mkdir -p "$RUN/server" "$RUN/a"
 cat > "$RUN/server/server.yaml" <<EOF
 control:
   bind: "0.0.0.0:10000"
+  register_timeout: 10s
+  heartbeat_timeout: 60s
+  write_timeout: 5s
+  max_connections: 1000
 probe:
   bind: "0.0.0.0"
   base_port: 10000
@@ -41,6 +45,12 @@ admin:
   bind: "127.0.0.1:9090"
 database:
   path: "$RUN/server/gtun.db"
+limits:
+  max_devices_per_network: 8
+  min_cidr_prefix: 24
+  max_cidr_prefix: 28
+logging:
+  level: "info"
 EOF
 cat > "$RUN/a/client.yaml" <<EOF
 server:
@@ -49,6 +59,26 @@ server:
 identity:
   path: "$RUN/a/gtun-device-id"
   name: "mac-a"
+tun:
+  name: "gtun0"
+  mtu: 1456
+tunnel:
+  outbound_queue: 4096
+  inbound_queue: 4096
+control:
+  heartbeat_interval: 20s
+  register_timeout: 10s
+  connect_timeout: 10s
+  reconnect_interval: 5s
+  write_timeout: 5s
+probe:
+  timeout: 30s
+  per_port_timeout: 1s
+  retries: 3
+punch:
+  stable_timeout: 2s
+  variable_timeout: 15s
+  helper_count: 256
 logging:
   level: "debug"
 EOF
@@ -59,6 +89,28 @@ server:
 identity:
   path: \"/root/gtun-accept/gtun-device-id\"
   name: \"debian-b\"
+tun:
+  name: \"gtun0\"
+  mtu: 1456
+tunnel:
+  outbound_queue: 4096
+  inbound_queue: 4096
+control:
+  heartbeat_interval: 20s
+  register_timeout: 10s
+  connect_timeout: 10s
+  reconnect_interval: 5s
+  write_timeout: 5s
+probe:
+  timeout: 30s
+  per_port_timeout: 1s
+  retries: 3
+punch:
+  stable_timeout: 2s
+  variable_timeout: 15s
+  helper_count: 256
+logging:
+  level: \"debug\"
 EOF"
 
 echo "== 启动：服务器 → Debian B → 本机 A =="

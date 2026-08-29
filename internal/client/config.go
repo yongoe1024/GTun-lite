@@ -84,7 +84,8 @@ type ClientConfig struct {
 }
 
 // LoadClientConfig 读取并校验客户端配置。严格模式拒绝未知键，理由同服务端：
-// 配置是本机文件，拼错键名静默失效比启动报错糟糕。
+// 配置是本机文件，拼错键名静默失效比启动报错糟糕。配置全量显式：缺任何
+// 必填键同样拒绝启动——生效值即文件内容，不存在代码补值的第二事实源。
 func LoadClientConfig(path string) (ClientConfig, error) {
 	var config ClientConfig
 	raw, err := os.ReadFile(path)
@@ -96,18 +97,10 @@ func LoadClientConfig(path string) (ClientConfig, error) {
 	if err := decoder.Decode(&config); err != nil {
 		return config, fmt.Errorf("parse client config: %w", err)
 	}
-	config.applyDefaults()
-	if err := config.validate(); err != nil {
+	if err := config.requireExplicit(); err != nil {
 		return config, fmt.Errorf("invalid client config: %w", err)
 	}
-	return config, nil
-}
-
-// applyDefaults 填充省略字段的默认值。
-func (config *ClientConfig) applyDefaults() {
-	if config.Identity.Path == "" {
-		config.Identity.Path = "gtun-device-id"
-	}
+	// 唯一的派生默认：设备名留空取主机名（环境相关，无法写进静态模板）。
 	if config.Identity.Name == "" {
 		if hostname, err := os.Hostname(); err == nil && hostname != "" {
 			config.Identity.Name = hostname
@@ -115,73 +108,85 @@ func (config *ClientConfig) applyDefaults() {
 			config.Identity.Name = "gtun-device"
 		}
 	}
-	if config.Control.HeartbeatInterval == 0 {
-		config.Control.HeartbeatInterval = 20 * time.Second
+	if err := config.validate(); err != nil {
+		return config, fmt.Errorf("invalid client config: %w", err)
 	}
-	if config.Control.RegisterTimeout == 0 {
-		config.Control.RegisterTimeout = 10 * time.Second
-	}
-	if config.Control.ConnectTimeout == 0 {
-		config.Control.ConnectTimeout = 10 * time.Second
-	}
-	if config.Control.ReconnectInterval == 0 {
-		config.Control.ReconnectInterval = 5 * time.Second
-	}
-	if config.Server.ProbeBasePort == 0 {
-		config.Server.ProbeBasePort = 10000
-	}
-	if config.TUN.Name == "" {
-		config.TUN.Name = "gtun0"
-	}
-	if config.TUN.MTU == 0 {
-		// 1456 = 1500 - 44（IPv4+UDP+GTUN 外层开销）：干净 1500 路径上的
-		// 无分片上限，每包载荷比 1280 多 14%。物理路径更差（如 PPPoE 1492、
-		// 嵌套隧道 1400）时应手动下调到「路径 MTU - 44」，否则外层被分片。
-		config.TUN.MTU = 1456
-	}
-	if config.Tunnel.OutboundQueuePackets == 0 {
-		config.Tunnel.OutboundQueuePackets = 4096
-	}
-	if config.Tunnel.InboundQueuePackets == 0 {
-		config.Tunnel.InboundQueuePackets = 4096
-	}
-	if config.Probe.Timeout == 0 {
-		config.Probe.Timeout = 30 * time.Second
-	}
-	if config.Probe.PerPortTimeout == 0 {
-		// 单端口等待取 1s：五个端口串行、每端口含重试最多 4 次等待，
-		// 1s×4×5=20s 装得进 30s 总预算；5s 时单端口最坏吃掉 20s，
-		// 一个端口被滤会把整轮画像挤爆成 PROBE_TIMEOUT。
-		config.Probe.PerPortTimeout = time.Second
-	}
-	if config.Probe.Retries == 0 {
-		config.Probe.Retries = 3
-	}
-	if config.Punch.StableTimeout == 0 {
-		// 2s：健康握手 2~3 个 RTT 绰绰有余；竞态死局（双向零入站）2s 即可
-		// 判定，早离场交给服务器重连重掷（配自动重试单周期 ~7s）。
-		config.Punch.StableTimeout = 2 * time.Second
-	}
-	if config.Punch.VariableTimeout == 0 {
-		config.Punch.VariableTimeout = 15 * time.Second
-	}
-	if config.Punch.HelperCount == 0 {
-		config.Punch.HelperCount = 256
-	}
-	if config.Control.WriteTimeout == 0 {
-		config.Control.WriteTimeout = 5 * time.Second
-	}
-	if config.Logging.Level == "" {
-		config.Logging.Level = "info"
-	}
+	return config, nil
 }
 
-// validate 拒绝缺失或自相矛盾的取值。服务器地址没有默认值：
-// 它是部署参数，猜一个只会掩盖配置文件没读到的问题。
-func (config ClientConfig) validate() error {
-	if config.Server.Addr == "" {
-		return errors.New("server.addr is required")
+// DefaultConfig 返回静态默认值，是 cmd/client/client.yaml 模板的事实源
+// （config_test 锁两者一致）。不参与加载流程：LoadClientConfig 不补值。
+// server.addr 无默认（部署参数）；identity.name 派生自主机名；logging
+// file/error_file 语义可选（留空回落 stderr），三者不在默认值内。
+func DefaultConfig() ClientConfig {
+	var config ClientConfig
+	config.Server.ProbeBasePort = 10000
+	config.Identity.Path = "gtun-device-id"
+	config.TUN.Name = "gtun0"
+	// 1456 = 1500 - 44（IPv4+UDP+GTUN 外层开销）：干净 1500 路径上的
+	// 无分片上限，每包载荷比 1280 多 14%。物理路径更差（如 PPPoE 1492、
+	// 嵌套隧道 1400）时应手动下调到「路径 MTU - 44」，否则外层被分片。
+	config.TUN.MTU = 1456
+	config.Tunnel.OutboundQueuePackets = 4096
+	config.Tunnel.InboundQueuePackets = 4096
+	config.Control.HeartbeatInterval = 20 * time.Second
+	config.Control.RegisterTimeout = 10 * time.Second
+	config.Control.ConnectTimeout = 10 * time.Second
+	config.Control.ReconnectInterval = 5 * time.Second
+	config.Control.WriteTimeout = 5 * time.Second
+	config.Probe.Timeout = 30 * time.Second
+	// 单端口等待取 1s：五个端口串行、每端口含重试最多 4 次等待，
+	// 1s×4×5=20s 装得进 30s 总预算；5s 时单端口最坏吃掉 20s，
+	// 一个端口被滤会把整轮画像挤爆成 PROBE_TIMEOUT。
+	config.Probe.PerPortTimeout = time.Second
+	config.Probe.Retries = 3
+	// 2s：健康握手 2~3 个 RTT 绰绰有余；竞态死局（双向零入站）2s 即可
+	// 判定，早离场交给服务器重连重掷（配自动重试单周期 ~7s）。
+	config.Punch.StableTimeout = 2 * time.Second
+	config.Punch.VariableTimeout = 15 * time.Second
+	config.Punch.HelperCount = 256
+	config.Logging.Level = "info"
+	return config
+}
+
+// requireExplicit 拒绝缺失的必填键。零值即视为缺键：显式写 0 的场景要么
+// 本就不合法（超时类），要么语义上等同于缺（计数类），一律不与缺键区分。
+func (config ClientConfig) requireExplicit() error {
+	checks := []struct {
+		key     string
+		missing bool
+	}{
+		{"server.addr", config.Server.Addr == ""},
+		{"server.probe_base_port", config.Server.ProbeBasePort == 0},
+		{"identity.path", config.Identity.Path == ""},
+		{"control.heartbeat_interval", config.Control.HeartbeatInterval == 0},
+		{"control.register_timeout", config.Control.RegisterTimeout == 0},
+		{"control.connect_timeout", config.Control.ConnectTimeout == 0},
+		{"control.reconnect_interval", config.Control.ReconnectInterval == 0},
+		{"control.write_timeout", config.Control.WriteTimeout == 0},
+		{"tun.name", config.TUN.Name == ""},
+		{"tun.mtu", config.TUN.MTU == 0},
+		{"tunnel.outbound_queue", config.Tunnel.OutboundQueuePackets == 0},
+		{"tunnel.inbound_queue", config.Tunnel.InboundQueuePackets == 0},
+		{"probe.timeout", config.Probe.Timeout == 0},
+		{"probe.per_port_timeout", config.Probe.PerPortTimeout == 0},
+		{"probe.retries", config.Probe.Retries == 0},
+		{"punch.stable_timeout", config.Punch.StableTimeout == 0},
+		{"punch.variable_timeout", config.Punch.VariableTimeout == 0},
+		{"punch.helper_count", config.Punch.HelperCount == 0},
+		{"logging.level", config.Logging.Level == ""},
 	}
+	for _, check := range checks {
+		if check.missing {
+			return fmt.Errorf("%s is required (config is full-explicit; copy cmd/client/client.yaml)", check.key)
+		}
+	}
+	return nil
+}
+
+// validate 拒绝自相矛盾的取值。缺失检查在 requireExplicit（键名级报错），
+// 这里只做范围与交叉校验。
+func (config ClientConfig) validate() error {
 	if config.Logging.File != "" && config.Logging.File == config.Logging.ErrorFile {
 		return errors.New("logging.file and logging.error_file must differ")
 	}
@@ -198,8 +203,9 @@ func (config ClientConfig) validate() error {
 	if config.Probe.Timeout <= 0 || config.Probe.PerPortTimeout <= 0 || config.Probe.Timeout < config.Probe.PerPortTimeout {
 		return errors.New("probe timeouts must be positive and total must cover per-port wait")
 	}
-	if config.Probe.Retries < 0 {
-		return errors.New("probe.retries must not be negative")
+	// 重试次数 0 与缺键不可区分，按全量显式口径取下限 1（含首次共 2 发）。
+	if config.Probe.Retries < 1 {
+		return errors.New("probe.retries must be at least 1")
 	}
 	if config.Punch.StableTimeout <= 0 || config.Punch.VariableTimeout <= 0 {
 		return errors.New("punch timeouts must be positive")

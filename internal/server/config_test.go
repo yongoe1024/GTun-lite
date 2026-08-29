@@ -3,6 +3,7 @@ package server
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -89,18 +90,58 @@ func TestLoadServerConfigAcceptsTightBoundary(t *testing.T) {
 }
 
 // TestLoadServerConfigLoggingPaths 日志双文件路径校验：相同路径拒绝。
+// 在模板内替换两个路径为同值（追加同段会触发 yaml 重复键解析错，测不到目标）。
 func TestLoadServerConfigLoggingPaths(t *testing.T) {
-	path := writeServerConfig(t, "")
-	content, err := os.ReadFile(path)
+	content := strings.Replace(serverTemplate(t), "gtun-server.log", "a.log", 1)
+	content = strings.Replace(content, "gtun-server.error.log", "a.log", 1)
+	path := filepath.Join(t.TempDir(), "server.yaml")
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadServerConfig(path); err == nil || !strings.Contains(err.Error(), "must differ") {
+		t.Fatalf("identical log paths must be rejected, got %v", err)
+	}
+}
+
+// serverTemplate 读仓库内的服务端配置模板。
+func serverTemplate(t *testing.T) string {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join("..", "..", "cmd", "server", "server.yaml"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	content = append(content, []byte("logging:\n  file: a.log\n  error_file: a.log\n")...)
-	conflictPath := filepath.Join(t.TempDir(), "conflict.yaml")
-	if err := os.WriteFile(conflictPath, content, 0o644); err != nil {
+	return string(raw)
+}
+
+// TestServerTemplateMatchesDefaultConfig 模板与代码默认值的一致性锁：
+// 两者漂移（改了一处忘另一处）在此处失败。Logging File/ErrorFile 是
+// 部署参数不在默认值内，比较前清零。
+func TestServerTemplateMatchesDefaultConfig(t *testing.T) {
+	config, err := LoadServerConfig("../../cmd/server/server.yaml")
+	if err != nil {
+		t.Fatalf("template must load: %v", err)
+	}
+	config.Logging.File = ""
+	config.Logging.ErrorFile = ""
+	if !reflect.DeepEqual(config, DefaultServerConfig()) {
+		t.Fatalf("template drifted from DefaultServerConfig():\n got %+v\nwant %+v", config, DefaultServerConfig())
+	}
+}
+
+// TestLoadServerConfigRejectsMissingKey 全量显式：缺任何必填键拒绝启动，
+// 错误信息点名缺的键。
+func TestLoadServerConfigRejectsMissingKey(t *testing.T) {
+	raw, err := os.ReadFile("../../cmd/server/server.yaml")
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := LoadServerConfig(conflictPath); err == nil {
-		t.Fatal("identical log paths must be rejected")
+	content := strings.Replace(string(raw), "  heartbeat_timeout: 60s", "", 1)
+	path := filepath.Join(t.TempDir(), "server.yaml")
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err = LoadServerConfig(path)
+	if err == nil || !strings.Contains(err.Error(), "control.heartbeat_timeout is required") {
+		t.Fatalf("expected missing-key rejection, got %v", err)
 	}
 }

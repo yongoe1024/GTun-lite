@@ -3,23 +3,90 @@ package client
 import (
 	"os"
 	"path/filepath"
+	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
-// writeConfig 写一个最小可用的客户端配置，覆盖指定字段。
+// repoPath 从本测试文件位置推仓库内路径。客户端包的 TestMain 会把工作
+// 目录切到临时目录（scanlog 落盘用），相对路径在测试里不可用。
+func repoPath(t *testing.T, rel string) string {
+	t.Helper()
+	_, thisFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("cannot locate test file")
+	}
+	return filepath.Join(filepath.Dir(thisFile), "..", "..", rel)
+}
+
+// clientTemplate 读仓库内的客户端配置模板（构建产物随包分发的同一文件）。
+func clientTemplate(t *testing.T) string {
+	t.Helper()
+	raw, err := os.ReadFile(repoPath(t, filepath.Join("cmd", "client", "client.yaml")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(raw)
+}
+
+// writeConfig 写全量客户端配置：DefaultConfig 打底、extra 覆盖（yaml
+// 合并语义，段内只写要改的键），序列化落盘。
 func writeConfig(t *testing.T, extra string) string {
 	t.Helper()
+	config := DefaultConfig()
+	config.Server.Addr = "127.0.0.1:10000"
+	if extra != "" {
+		if err := yaml.Unmarshal([]byte(extra), &config); err != nil {
+			t.Fatal(err)
+		}
+	}
+	out, err := yaml.Marshal(config)
+	if err != nil {
+		t.Fatal(err)
+	}
 	path := filepath.Join(t.TempDir(), "client.yaml")
-	content := "server:\n  addr: \"127.0.0.1:10000\"\n" + extra
-	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+	if err := os.WriteFile(path, out, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	return path
 }
 
-// TestLoadClientConfigDefaults 省略 probe/punch 段时默认值齐全且可用。
+// TestClientTemplateMatchesDefaultConfig 模板与代码默认值的一致性锁：
+// 两者漂移（改了一处忘另一处）在此处失败。Identity.Name 派生自主机名、
+// Logging File/ErrorFile 是部署参数，不在默认值内，比较前清零。
+func TestClientTemplateMatchesDefaultConfig(t *testing.T) {
+	config, err := LoadClientConfig(repoPath(t, filepath.Join("cmd", "client", "client.yaml")))
+	if err != nil {
+		t.Fatalf("template must load: %v", err)
+	}
+	config.Identity.Name = ""
+	config.Server.Addr = "" // 部署参数：模板必须写，默认值里没有
+	config.Logging.File = ""
+	config.Logging.ErrorFile = ""
+	if !reflect.DeepEqual(config, DefaultConfig()) {
+		t.Fatalf("template drifted from DefaultConfig():\n got %+v\nwant %+v", config, DefaultConfig())
+	}
+}
+
+// TestLoadClientConfigRejectsMissingKey 全量显式：缺任何必填键拒绝启动，
+// 错误信息点名缺的键。
+func TestLoadClientConfigRejectsMissingKey(t *testing.T) {
+	content := strings.Replace(clientTemplate(t), "  stable_timeout: 2s", "", 1)
+	path := filepath.Join(t.TempDir(), "client.yaml")
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := LoadClientConfig(path)
+	if err == nil || !strings.Contains(err.Error(), "punch.stable_timeout is required") {
+		t.Fatalf("expected missing-key rejection, got %v", err)
+	}
+}
+
+// TestLoadClientConfigDefaults 模板默认值齐全且可用。
 func TestLoadClientConfigDefaults(t *testing.T) {
 	config, err := LoadClientConfig(writeConfig(t, ""))
 	if err != nil {
@@ -63,7 +130,12 @@ func TestLoadClientConfigAcceptsTiers(t *testing.T) {
 
 // TestLoadClientConfigRejectsUnknownKeys 配置是本机文件：拼错键名必须报错。
 func TestLoadClientConfigRejectsUnknownKeys(t *testing.T) {
-	if _, err := LoadClientConfig(writeConfig(t, "prob:\n  timeout: 1s\n")); err == nil {
+	path := filepath.Join(t.TempDir(), "client.yaml")
+	content := clientTemplate(t) + "\nprob:\n  timeout: 1s\n"
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadClientConfig(path); err == nil {
 		t.Fatal("unknown key must be rejected")
 	}
 }

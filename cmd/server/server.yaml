@@ -1,4 +1,6 @@
-# GTun-Lite 服务端配置。所有键可省略（用默认值），显式写出便于部署时核对。
+# GTun-Lite 服务端配置。全部键必填，缺键拒绝启动；生效值即本文件内容
+# （模板与代码默认值的一致性由 config_test 锁定）。唯一可留空：
+# logging.file/error_file——删去或留空即回落 stderr。
 control:
   bind: "0.0.0.0:10000"        # TCP 控制面
   register_timeout: 10s        # 未注册连接的沉默上限

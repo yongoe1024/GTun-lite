@@ -77,55 +77,63 @@ func LoadServerConfig(path string) (ServerConfig, error) {
 	if err := decoder.Decode(&config); err != nil {
 		return config, fmt.Errorf("parse server config: %w", err)
 	}
-	config.applyDefaults()
+	if err := config.requireExplicit(); err != nil {
+		return config, fmt.Errorf("invalid server config: %w", err)
+	}
 	if err := config.validate(); err != nil {
 		return config, fmt.Errorf("invalid server config: %w", err)
 	}
 	return config, nil
 }
 
-// applyDefaults 填充省略字段的默认值。默认值即推荐值；要偏离就在文件里
-// 显式写出来，配置显式优于隐式协商。
-func (config *ServerConfig) applyDefaults() {
-	if config.Control.Bind == "" {
-		config.Control.Bind = "0.0.0.0:10000"
+// DefaultServerConfig 返回静态默认值，是 cmd/server/server.yaml 模板的
+// 事实源（config_test 锁两者一致）。不参与加载流程：LoadServerConfig
+// 不补值。logging file/error_file 语义可选（留空回落 stderr），不在其中。
+func DefaultServerConfig() ServerConfig {
+	var config ServerConfig
+	config.Control.Bind = "0.0.0.0:10000"
+	config.Control.RegisterTimeout = 10 * time.Second
+	config.Control.HeartbeatTimeout = 60 * time.Second
+	config.Control.WriteTimeout = 5 * time.Second
+	config.Control.MaxConnections = 1000
+	config.Probe.Bind = "0.0.0.0"
+	config.Probe.BasePort = 10000
+	config.Admin.Bind = "127.0.0.1:9090"
+	config.Database.Path = "gtun.db"
+	config.Limits.MaxDevicesPerNetwork = 8
+	config.Limits.MinCIDRPrefix = 24
+	config.Limits.MaxCIDRPrefix = 28
+	config.Logging.Level = "info"
+	return config
+}
+
+// requireExplicit 拒绝缺失的必填键。零值即视为缺键：显式写 0 的场景要么
+// 本就不合法（超时类），要么语义上等同于缺（容量类），一律不与缺键区分。
+func (config ServerConfig) requireExplicit() error {
+	checks := []struct {
+		key     string
+		missing bool
+	}{
+		{"control.bind", config.Control.Bind == ""},
+		{"control.register_timeout", config.Control.RegisterTimeout == 0},
+		{"control.heartbeat_timeout", config.Control.HeartbeatTimeout == 0},
+		{"control.write_timeout", config.Control.WriteTimeout == 0},
+		{"control.max_connections", config.Control.MaxConnections == 0},
+		{"probe.bind", config.Probe.Bind == ""},
+		{"probe.base_port", config.Probe.BasePort == 0},
+		{"admin.bind", config.Admin.Bind == ""},
+		{"database.path", config.Database.Path == ""},
+		{"limits.max_devices_per_network", config.Limits.MaxDevicesPerNetwork == 0},
+		{"limits.min_cidr_prefix", config.Limits.MinCIDRPrefix == 0},
+		{"limits.max_cidr_prefix", config.Limits.MaxCIDRPrefix == 0},
+		{"logging.level", config.Logging.Level == ""},
 	}
-	if config.Control.RegisterTimeout == 0 {
-		config.Control.RegisterTimeout = 10 * time.Second
+	for _, check := range checks {
+		if check.missing {
+			return fmt.Errorf("%s is required (config is full-explicit; copy cmd/server/server.yaml)", check.key)
+		}
 	}
-	if config.Control.HeartbeatTimeout == 0 {
-		config.Control.HeartbeatTimeout = 60 * time.Second
-	}
-	if config.Control.WriteTimeout == 0 {
-		config.Control.WriteTimeout = 5 * time.Second
-	}
-	if config.Control.MaxConnections == 0 {
-		config.Control.MaxConnections = 1000
-	}
-	if config.Probe.Bind == "" {
-		config.Probe.Bind = "0.0.0.0"
-	}
-	if config.Probe.BasePort == 0 {
-		config.Probe.BasePort = 10000
-	}
-	if config.Admin.Bind == "" {
-		config.Admin.Bind = "127.0.0.1:9090"
-	}
-	if config.Database.Path == "" {
-		config.Database.Path = "gtun.db"
-	}
-	if config.Limits.MaxDevicesPerNetwork == 0 {
-		config.Limits.MaxDevicesPerNetwork = 8
-	}
-	if config.Limits.MinCIDRPrefix == 0 {
-		config.Limits.MinCIDRPrefix = 24
-	}
-	if config.Limits.MaxCIDRPrefix == 0 {
-		config.Limits.MaxCIDRPrefix = 28
-	}
-	if config.Logging.Level == "" {
-		config.Logging.Level = "info"
-	}
+	return nil
 }
 
 // validate 拒绝自相矛盾的取值。

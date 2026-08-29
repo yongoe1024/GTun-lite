@@ -1,4 +1,7 @@
-# GTun-Lite 客户端配置。本机虚拟 IP 由服务器下发，不在此配置。
+# GTun-Lite 客户端配置。全量必填：缺任何键拒绝启动，生效值即本文件内容
+# （模板与代码默认值的一致性由 config_test 锁定）。仅两处例外：
+# identity.name 留空取主机名（派生默认）；logging.file/error_file 留空回落 stderr。
+# 本机虚拟 IP 由服务器下发，不在此配置。
 server:
   addr: "127.0.0.1:10000"      # 服务器控制面地址（必填：唯一没有默认值的键）
   probe_base_port: 10000       # 探测端口段起点（与服务端 probe.base_port 一致）

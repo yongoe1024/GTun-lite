@@ -30,15 +30,14 @@ type testServer struct {
 }
 
 // startTestServer 启动一台测试服务端，端口由内核分配。
-// adjust 可选地修改最终配置（如压低会话容量），在 applyDefaults 之后执行。
+// adjust 可选地修改最终配置（如压低会话容量），在默认值基础上执行。
 func startTestServer(t *testing.T, adjust ...func(*ServerConfig)) *testServer {
 	t.Helper()
 	store, err := OpenStore(context.Background(), filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
-	config := ServerConfig{}
-	config.applyDefaults()
+	config := DefaultServerConfig()
 	config.Control.Bind = "127.0.0.1:0"
 	// 心跳超时压到亚秒级、注册超时压到 1s，让失活与超时用例不必真等。
 	// 这里直接构造配置对象，绕过 LoadServerConfig 的「至少 40s」校验——
