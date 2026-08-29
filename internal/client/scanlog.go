@@ -1,5 +1,5 @@
-// ⚠️ 开发期临时设施：预测端口观察日志，发布前整体删除本文件
-// 并移除 worker.go 中全部 scanNote/scanHit/scanInboundOnce 调用点。
+// ⚠️ 开发期观察设施：预测端口观察日志。删除须由用户明示，勿自行删除；
+// 删除时整体移除本文件与 worker.go 中全部 scanNote/scanHit/scanInboundOnce 调用点。
 //
 // 用途：观察对端 NAT 的端口分配规律。记录 stable 侧三级扫描的每个候选、
 // 入站信标的唯一源端口、命中预测的阶段与序号。写死路径、不走配置、
