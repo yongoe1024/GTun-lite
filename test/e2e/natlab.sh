@@ -103,10 +103,34 @@ set_nat() {
             || { echo "FAIL: natgw$ns slirp 档启动失败"; return 1; }
         return 0
     fi
-    # conntrack 档：若上一组合用过 slirp 档，先恢复 l/c veth 拓扑
+    if [ "$t" = natpf ]; then
+        # 端口受限 pf 档：natpf 用户态 NAT 只接管 UDP（100.64/16 路由进
+        # tun 设备）；TCP/ICMP 控制面走 conntrack，但仅对内网源生效——
+        # natpf 本地套接字的 UDP 不配 NAT，负记录无从下毒。需先编译部署
+        # natpf 二进制（run_combo 的部署段完成）。
+        $SSH "ip netns exec natgw$ns iptables -t nat -F 2>/dev/null
+            ip netns exec natgw$ns iptables -t nat -A POSTROUTING -o w$ns -s 10.0.$ns.0/24 -p tcp -j MASQUERADE
+            ip netns exec natgw$ns iptables -t nat -A POSTROUTING -o w$ns -s 10.0.$ns.0/24 -p icmp -j MASQUERADE
+            ip netns exec natgw$ns iptables -t nat -A POSTROUTING -o w$ns -s 10.0.$ns.0/24 -p udp -j MASQUERADE
+            pkill -x natpf 2>/dev/null
+            sleep 0.5
+            ip netns exec natgw$ns setsid nohup /root/gtun-natlab/natpf -tun tun0 -wan 100.64.$ns.100 -lan 10.0.$ns.0/24 -filter port >/tmp/natpf$ns.log 2>&1 < /dev/null &
+            sleep 1
+            ip -n natgw$ns link set tun0 up
+            # 策略路由：仅内网源的包进 tun（natpf 经手）；natpf 自身出向
+            # 套接字走主表出 w2——否则出站包被同一路由回灌进 tun 自吞
+            ip -n natgw$ns route replace 100.64.0.0/16 dev tun0 table 100
+            ip -n natgw$ns rule add from 10.0.$ns.0/24 table 100 priority 100
+            pgrep -x natpf >/dev/null && echo natpf-running"             || { echo "FAIL: natgw$ns natpf 档启动失败"; return 1; }
+        return 0
+    fi
+    # conntrack 档：若上一组合用过 slirp/natpf 档，先恢复拓扑
     $SSH "if ! ip -n natgw$ns link show l$ns >/dev/null 2>&1; then
         ip -n client$ns link del tap9 2>/dev/null
         pkill -x slirp4netns 2>/dev/null
+        pkill -x natpf 2>/dev/null
+        ip -n natgw$ns rule del from 10.0.$ns.0/24 table 100 priority 100 2>/dev/null
+        ip -n natgw$ns route del 100.64.0.0/16 dev tun0 table 100 2>/dev/null
         ip link add l$ns type veth peer name c$ns
         ip link set l$ns netns natgw$ns; ip link set c$ns netns client$ns
         ip -n natgw$ns addr add 10.0.$ns.1/24 dev l$ns
@@ -131,6 +155,11 @@ run_combo() {
     echo ""
     echo "===== 组合 $name: natgw1=$t1 natgw2=$t2 ====="
     OUT="$RUN/$name"; rm -rf "$OUT"; mkdir -p "$OUT"; echo "RUNNING" > "$OUT/verdict"
+    if [ "$t1" = natpf ] || [ "$t2" = natpf ]; then
+        GOOS=linux GOARCH=amd64 go build -o "$RUN/natpf" "$ROOT/test/natpf" || return 1
+        scp -q "$RUN/natpf" "$SSH_TARGET:$D/natpf" || return 1
+    fi
+
     # 先杀上一组合的客户端：scp 覆盖运行中的二进制会 ETXTBSY。
     # 必须按进程名杀主机全量——上一轮 setup_lab 重建 netns 后，旧客户端
     # 会变成 ip netns pids 看不见的僵尸，仍占着二进制。
@@ -278,7 +307,7 @@ EOF
 }
 
 cleanup() {
-    $SSH "pkill -x gtun-client; pkill -x slirp4netns" 2>/dev/null
+    $SSH "pkill -x gtun-client; pkill -x slirp4netns; pkill -x natpf" 2>/dev/null
     pkill -TERM -x gtun-server 2>/dev/null
 }
 trap cleanup EXIT
@@ -298,6 +327,7 @@ for c in $COMBOS; do
         B) run_combo B variable stable || FAILED=$((FAILED+1)) ;;
         C) run_combo C variable variable || FAILED=$((FAILED+1)) ;;
         D) run_combo D variable slirp || FAILED=$((FAILED+1)) ;;
+        E) run_combo E variable natpf || FAILED=$((FAILED+1)) ;;
         *) echo "未知组合: $c"; FAILED=$((FAILED+1)) ;;
     esac
 done
