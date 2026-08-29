@@ -76,4 +76,4 @@ icacls.exe "C:\ProgramData\ssh\administrators_authorized_keys" /inheritance:r /g
   物理 LAN 网段（网段重叠防线见 README 已知边界）；
 - 设备身份文件随客户端持久，勿跨设备复制（同身份双开会互相顶替）；
 - 判定出口 NAT 类型：手机热点=variable 源，家庭宽带=stable 但出口 IP
-  可能按流轮换（PROBE_IP_CHANGED 属环境特性，见 README）。
+  可能按流轮换（不直接拒绝，见 [05-NAT穿透与打洞.md](../../设计文档/05-NAT穿透与打洞.md)）。

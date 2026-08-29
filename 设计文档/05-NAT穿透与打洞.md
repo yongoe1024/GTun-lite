@@ -9,7 +9,7 @@
                 selectLocalIPv4 选本机源地址（UDP connect 让内核选「通往服务器」的出口）
                 主 socket 绑定该地址
 阶段1  画像     同一 socket 向服务器 5 个探测端口各发 PROBE，收 PORT 回显
-                → 分类 stable / variable / PROBE_IP_CHANGED
+                → 分类 stable / variable（IP 轮换不再单独拒绝，取首个回显）
                 → WorkerProfile 事件上报服务器（服务器配对后互发 peer_profile）
 阶段2  等对端   等待服务器下发的对端画像
                 预算 = probe.timeout + max(两端 punch 超时)；超时 → PUNCH_TIMEOUT
@@ -30,9 +30,9 @@
 
 | 判定 | 条件 | 结论 |
 |---|---|---|
-| `PROBE_IP_CHANGED` | 5 次回显的公网 IP 不一致 | 家宽按流轮换出口，直接拒绝 |
-| `stable` | 公网 IP 一致且 5 个映射端口全等 | NAT 端口可预测（endpoint-independent） |
-| `variable` | 公网 IP 一致但端口不全等 | NAT 端口随机分配 |
+| 公网 IP 不一致 | 5 次回显的公网 IP 不一致 | 家宽按流轮换出口。**不再拒绝**：取首个回显当固定值继续打洞（真机实证此类环境 stable × stable 难打通，换网络最有效） |
+| `stable` | — | NAT 端口可预测（endpoint-independent） |
+| `variable` | 端口不全等 | NAT 端口随机分配 |
 
 单端口探测被滤（如防火墙黑洞）意味着画像不完整 → 如实 PROBE_TIMEOUT（设计行为：单端口缺失 = 诚实失败，真机验证见 [真机验收记录.md](../test/e2e/真机验收记录.md)）。
 

@@ -308,8 +308,8 @@ func (worker *linkWorker) run() {
 }
 
 // probe 向服务器 5 个连续探测端口各发一个 PROBE 并组装画像。
-// 任何端口在预算内无响应 → PROBE_TIMEOUT；五次回显公网 IP 不一致 →
-// PROBE_IP_CHANGED（家宽按流轮换出口 IP，端口画像此时没有意义）。
+// 任何端口在预算内无响应 → PROBE_TIMEOUT。回显公网 IP 不一致（家宽按流
+// 轮换出口）不再拒绝：一律取首个回显当固定值继续打洞，轮换仅日志留痕。
 func (worker *linkWorker) probe(serverIP net.IP) (common.NATProfile, common.Reason) {
 	nonceBytes := make([]byte, 8)
 	if _, err := rand.Read(nonceBytes); err != nil {

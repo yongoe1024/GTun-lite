@@ -186,7 +186,7 @@ Windows 解析做语言无关处理：前两列均可解析为 IPv4 即算数据
 - **每条已注册链路 1 个出站发送者** `outboundSender`（RegisterLink 时启动）；
 - **1 个全局 TUN 写循环** `tunWriteLoop`。
 
-队列：每链路出站 `outbound chan []byte`（容量 = `tunnel.outbound_queue`，默认 1024 包）；全局入站 `writeCh`（容量 = `tunnel.inbound_queue`，默认 1024 包）。溢出一律**丢新包**（不阻塞投递方、不挤掉旧包），逐包日志按秒节流（CAS 实现的每位置每秒至多一条）。
+队列：每链路出站 `outbound chan []byte`（容量 = `tunnel.outbound_queue`，默认 4096 包）；全局入站 `writeCh`（容量 = `tunnel.inbound_queue`，默认 4096 包）。溢出一律**丢新包**（不阻塞投递方、不挤掉旧包），逐包日志按秒节流（CAS 实现的每位置每秒至多一条）。
 
 ### 6.2 读循环
 
