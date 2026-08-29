@@ -670,7 +670,7 @@ func TestPeerProfileWaitTimesOut(t *testing.T) {
 	events := make(chan WorkerEvent, 16)
 	worker := startLinkWorker(config, common.GenerateDeviceID(), common.GenerateLinkToken(), common.GeneratePeeringID(),
 		common.ConnectPeer{DeviceID: common.GenerateDeviceID(), Name: "peer", IP: "10.200.0.2"},
-		"10.200.0.1", nil, events, testLog())
+		"10.200.0.1", nil, events, testLog(), nil)
 	defer worker.Stop()
 
 	profileSeen := false

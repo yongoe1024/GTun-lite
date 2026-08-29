@@ -11,6 +11,7 @@ import (
 
 	"gtun-lite/internal/client"
 	"gtun-lite/internal/logging"
+	"gtun-lite/internal/notice"
 	"gtun-lite/internal/tun"
 )
 
@@ -46,6 +47,8 @@ func run() int {
 		return 1
 	}
 	defer closeLogs()
+	// 窗口提示与文件日志分流：这里只出中文关键状态，详见 internal/notice。
+	window := notice.New(os.Stderr)
 
 	// 运行的第一个动作：fd 预算自举——不够先抬高软上限（无特权要求），
 	// 抬完仍装不下「helper 档位 + 冗余」则禁止启动。把决定权留给运维：
@@ -61,21 +64,24 @@ func run() int {
 		return 1
 	}
 
-	manager := client.NewManager(config, identity, client.PlatformOpener(), tun.NewSystemRouteTable(), log)
+	manager := client.NewManager(config, identity, client.PlatformOpener(), tun.NewSystemRouteTable(), log, window)
 	// 优雅停止：manager.Close 停 Worker、拆数据面与 TUN/路由。
 	// 退出路径必须走到这里（os.Exit 在 main 里，defer 得以执行）。
 	defer manager.Close()
-	control := client.NewControlClient(config, manager, identity, log)
+	control := client.NewControlClient(config, manager, identity, log, window)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	log.Info("gtun-lite client started", "device_id", string(identity), "server", config.Server.Addr)
+	window.Printf("客户端已启动（设备 %s）", string(identity))
 	if err := control.Run(ctx); err != nil {
 		// 顶替是进程级终态：同一身份的另一实例在线上，退出把冲突留给运维。
 		log.Error("control client terminated", "error", err)
+		window.Printf("客户端异常退出：%v", err)
 		return 1
 	}
 	log.Info("gtun-lite client stopped")
+	window.Printf("客户端已退出")
 	return 0
 }

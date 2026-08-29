@@ -75,7 +75,7 @@ func waitForFinished(t *testing.T, worker *linkWorker) {
 
 // TestApplyConfigPrunesWorkers 配置收缩后，不在配置里的配对其 Worker 被停止并移除。
 func TestApplyConfigPrunesWorkers(t *testing.T) {
-	manager := NewManager(testManagerConfig(), common.GenerateDeviceID(), &fakeOpener{}, fakeRouteTable{}, testLog())
+	manager := NewManager(testManagerConfig(), common.GenerateDeviceID(), &fakeOpener{}, fakeRouteTable{}, testLog(), nil)
 	peering := common.GeneratePeeringID()
 	manager.ApplyConfig(networkWithPeer(t, peering))
 	manager.HandleConnect(&common.Connect{
@@ -96,7 +96,7 @@ func TestApplyConfigPrunesWorkers(t *testing.T) {
 
 // TestDisconnectStopsWorker DISCONNECT 停止并移除 Worker。
 func TestDisconnectStopsWorker(t *testing.T) {
-	manager := NewManager(testManagerConfig(), common.GenerateDeviceID(), &fakeOpener{}, fakeRouteTable{}, testLog())
+	manager := NewManager(testManagerConfig(), common.GenerateDeviceID(), &fakeOpener{}, fakeRouteTable{}, testLog(), nil)
 	peering := common.GeneratePeeringID()
 	manager.ApplyConfig(networkWithPeer(t, peering))
 	token := common.GenerateLinkToken()
@@ -115,7 +115,7 @@ func TestDisconnectStopsWorker(t *testing.T) {
 
 // TestReconnectReplacesWorker 同一配对再次 CONNECT 即重建：旧 Worker 停止、新 token 生效。
 func TestReconnectReplacesWorker(t *testing.T) {
-	manager := NewManager(testManagerConfig(), common.GenerateDeviceID(), &fakeOpener{}, fakeRouteTable{}, testLog())
+	manager := NewManager(testManagerConfig(), common.GenerateDeviceID(), &fakeOpener{}, fakeRouteTable{}, testLog(), nil)
 	peering := common.GeneratePeeringID()
 	manager.ApplyConfig(networkWithPeer(t, peering))
 	first := common.GenerateLinkToken()
@@ -138,7 +138,7 @@ func TestReconnectReplacesWorker(t *testing.T) {
 // TestStateReportShape 全量上报按配置枚举：Worker 存活报 CONNECTING 带 token，
 // 无 Worker 报 IDLE；终结后的 Worker 同样报 IDLE。
 func TestStateReportShape(t *testing.T) {
-	manager := NewManager(testManagerConfig(), common.GenerateDeviceID(), &fakeOpener{}, fakeRouteTable{}, testLog())
+	manager := NewManager(testManagerConfig(), common.GenerateDeviceID(), &fakeOpener{}, fakeRouteTable{}, testLog(), nil)
 	peering := common.GeneratePeeringID()
 	manager.ApplyConfig(networkWithPeer(t, peering))
 
@@ -168,7 +168,7 @@ func TestStateReportShape(t *testing.T) {
 
 // TestStateReportWithoutConfig 没收到过配置时上报为空快照，不是 nil。
 func TestStateReportWithoutConfig(t *testing.T) {
-	manager := NewManager(testManagerConfig(), common.GenerateDeviceID(), &fakeOpener{}, fakeRouteTable{}, testLog())
+	manager := NewManager(testManagerConfig(), common.GenerateDeviceID(), &fakeOpener{}, fakeRouteTable{}, testLog(), nil)
 	report := manager.StateReport()
 	if !report.Full || report.Links == nil || len(report.Links) != 0 {
 		t.Fatalf("expected empty full snapshot, got %+v", report)
@@ -178,7 +178,7 @@ func TestStateReportWithoutConfig(t *testing.T) {
 // TestPeerProfileDeliveredAndFiltered 对端画像投递给匹配的 Worker，
 // token 不匹配的丢弃。
 func TestPeerProfileDeliveredAndFiltered(t *testing.T) {
-	manager := NewManager(testManagerConfig(), common.GenerateDeviceID(), &fakeOpener{}, fakeRouteTable{}, testLog())
+	manager := NewManager(testManagerConfig(), common.GenerateDeviceID(), &fakeOpener{}, fakeRouteTable{}, testLog(), nil)
 	peering := common.GeneratePeeringID()
 	manager.ApplyConfig(networkWithPeer(t, peering))
 	token := common.GenerateLinkToken()
@@ -307,7 +307,7 @@ func TestDataStackOpenClose(t *testing.T) {
 // TestConnectRejectedWhenStackNil 数据面未就绪时收到 CONNECT：不开 Worker，
 // 立即回报失败；从未打开过栈时原因默认 TUN_CREATE_FAILED。
 func TestConnectRejectedWhenStackNil(t *testing.T) {
-	manager := NewManager(testManagerConfig(), common.GenerateDeviceID(), &fakeOpener{}, fakeRouteTable{}, testLog())
+	manager := NewManager(testManagerConfig(), common.GenerateDeviceID(), &fakeOpener{}, fakeRouteTable{}, testLog(), nil)
 	peering := common.GeneratePeeringID()
 	manager.HandleConnect(&common.Connect{
 		Type: common.MessageConnect, Token: common.GenerateLinkToken(), PeeringID: peering,
@@ -345,7 +345,7 @@ func (opener *recoveringOpener) Open(ctx context.Context, name string, mtu int, 
 // 暂时性故障恢复后无需重启进程即可继续建链。
 func TestConnectRetriesStackOpen(t *testing.T) {
 	opener := &recoveringOpener{failures: 1}
-	manager := NewManager(testManagerConfig(), common.GenerateDeviceID(), opener, fakeRouteTable{}, testLog())
+	manager := NewManager(testManagerConfig(), common.GenerateDeviceID(), opener, fakeRouteTable{}, testLog(), nil)
 	peering := common.GeneratePeeringID()
 	manager.ApplyConfig(networkWithPeer(t, peering))
 	if manager.stack != nil || manager.stackFailureReason != common.ReasonTUNCreateFailed {
@@ -383,7 +383,7 @@ func (conflictingRouteTable) LocalAddresses() ([]netip.Addr, error) {
 // TestPreflightFailureReason preflight 冲突归因为 ROUTE_CONFLICT，
 // 并在后续 CONNECT 回报里携带该真实原因。
 func TestPreflightFailureReason(t *testing.T) {
-	manager := NewManager(testManagerConfig(), common.GenerateDeviceID(), &fakeOpener{}, conflictingRouteTable{}, testLog())
+	manager := NewManager(testManagerConfig(), common.GenerateDeviceID(), &fakeOpener{}, conflictingRouteTable{}, testLog(), nil)
 	manager.ApplyConfig(networkWithPeer(t, common.GeneratePeeringID()))
 	if manager.stack != nil || manager.stackFailureReason != common.ReasonRouteConflict {
 		t.Fatalf("expected nil stack with ROUTE_CONFLICT, got stack=%v reason=%q", manager.stack != nil, manager.stackFailureReason)

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"gtun-lite/internal/common"
+	"gtun-lite/internal/notice"
 )
 
 // ErrDuplicateIdentity 是进程级终态：同一设备身份的另一条连接完成了注册，
@@ -29,11 +30,12 @@ type ControlClient struct {
 	manager  *Manager
 	identity common.DeviceID
 	log      *slog.Logger
+	window   *notice.Notice
 }
 
 // NewControlClient 创建控制客户端。
-func NewControlClient(config ClientConfig, manager *Manager, identity common.DeviceID, log *slog.Logger) *ControlClient {
-	return &ControlClient{config: config, manager: manager, identity: identity, log: log}
+func NewControlClient(config ClientConfig, manager *Manager, identity common.DeviceID, log *slog.Logger, window *notice.Notice) *ControlClient {
+	return &ControlClient{config: config, manager: manager, identity: identity, log: log, window: window}
 }
 
 // Run 维持控制会话直到 ctx 取消，或收到顶替通知（ErrDuplicateIdentity）。
@@ -48,6 +50,7 @@ func (client *ControlClient) Run(ctx context.Context) error {
 			return err
 		case err != nil:
 			client.log.Warn("control session ended; reconnecting", "error", err, "interval", client.config.Control.ReconnectInterval.String())
+			client.window.Printf("与端口服务器连接中断，%s 后重连", client.config.Control.ReconnectInterval.String())
 		}
 		select {
 		case <-time.After(client.config.Control.ReconnectInterval):
@@ -91,6 +94,7 @@ func (client *ControlClient) runSession(ctx context.Context) error {
 		return fmt.Errorf("report initial state: %w", err)
 	}
 	client.log.Info("control session established", "server", client.config.Server.Addr)
+	client.window.Printf("已连接端口服务器 %s", client.config.Server.Addr)
 
 	graceful = true // 从这里起，异常退出都尝试礼貌注销；正常退出路径同样注销
 	return client.messageLoop(ctx, connection, reader)

@@ -17,6 +17,7 @@ import (
 	"golang.org/x/net/ipv4"
 
 	"gtun-lite/internal/common"
+	"gtun-lite/internal/notice"
 )
 
 // 打洞与保活的固定参数。不进配置文件：它们是协议行为的一部分，
@@ -79,6 +80,7 @@ type linkWorker struct {
 	device   common.DeviceID
 	config   ClientConfig
 	log      *slog.Logger
+	window   *notice.Notice
 	events   chan<- WorkerEvent
 	incoming chan common.NATProfile // 对端画像投递（容量 1）
 	ctx      context.Context
@@ -187,12 +189,12 @@ type wireEvent struct {
 
 // startLinkWorker 创建并启动一次尝试的 Worker。localIP 是本机虚拟 IP
 // （入站校验用），deliverInbound 是数据面入站投递回调（可为 nil）。
-func startLinkWorker(config ClientConfig, device common.DeviceID, token common.LinkToken, peering common.PeeringID, peer common.ConnectPeer, localIP common.IPv4, deliverInbound func([]byte), events chan<- WorkerEvent, log *slog.Logger) *linkWorker {
+func startLinkWorker(config ClientConfig, device common.DeviceID, token common.LinkToken, peering common.PeeringID, peer common.ConnectPeer, localIP common.IPv4, deliverInbound func([]byte), events chan<- WorkerEvent, log *slog.Logger, window *notice.Notice) *linkWorker {
 	ctx, cancel := context.WithCancel(context.Background())
 	worker := &linkWorker{
 		token: token, peering: peering, peer: peer, device: device,
 		config: config, log: log.With("peering_id", string(peering), "token", string(token)),
-		events: events, incoming: make(chan common.NATProfile, 1),
+		window: window, events: events, incoming: make(chan common.NATProfile, 1),
 		ctx: ctx, cancel: cancel,
 		localVirtualIP: localIP, peerVirtualIP: peer.IP, deliverInbound: deliverInbound,
 		punchSent: make(map[punchSentKey]punchSentRecord), reverseSent: make(map[reverseKey]struct{}),
@@ -269,6 +271,8 @@ func (worker *linkWorker) run() {
 		return
 	}
 	worker.emit(WorkerEvent{PeeringID: worker.peering, Token: worker.token, Kind: WorkerProfile, Profile: &profile})
+	worker.window.Printf("探测完成：公网 IP %s，端口 %v，本机 NAT %s",
+		string(profile.PublicIP), profile.Ports, notice.NAT(profile.NAT))
 
 	// 阶段二：等同次尝试的对端画像（服务器在双方画像齐后下发）。
 	//
@@ -432,6 +436,7 @@ func (worker *linkWorker) punch(local, peer common.NATProfile) {
 	}
 	deadline := time.Now().Add(budget)
 	worker.log.Info("punch started", "local_nat", local.NAT, "peer_nat", peer.NAT, "budget", budget.String())
+	worker.window.Printf("开始打洞（本机 NAT %s，对方 NAT %s）", notice.NAT(local.NAT), notice.NAT(peer.NAT))
 
 	// 接收循环：主 socket + （variable 侧）全部 helper 各一个。
 	worker.startReceiver(worker.mainSocketRef(), worker.mainSocketID, peer.PublicIP)
@@ -519,6 +524,7 @@ func (worker *linkWorker) own(deadline time.Time) {
 			worker.dataMu.Unlock()
 			if idle >= keepaliveTimeout {
 				worker.log.Warn("peer keepalive timed out")
+				worker.window.Printf("对方心跳超时，隧道断开")
 				worker.emit(WorkerEvent{PeeringID: worker.peering, Token: worker.token, Kind: WorkerLost, Reason: common.ReasonTunnelLost})
 				return
 			}
@@ -655,6 +661,7 @@ func (worker *linkWorker) commit(socket *net.UDPConn, localID, peerID common.Soc
 	worker.lastActivity = time.Now()
 	worker.dataMu.Unlock()
 	worker.log.Info("punch connected", "peer", source.String(), "local_socket", string(localID), "peer_socket", string(peerID))
+	worker.window.Printf("打洞成功，隧道已建立")
 	worker.emit(WorkerEvent{PeeringID: worker.peering, Token: worker.token, Kind: WorkerConnected})
 	close(worker.connectedCh) // 发送 goroutine 由此退出（helper 信标除外，见 pollHelpers）
 	worker.pruneHelpers(socket)
@@ -1187,6 +1194,7 @@ func (worker *linkWorker) emit(event WorkerEvent) {
 // fail 上报失败并终结。
 func (worker *linkWorker) fail(reason common.Reason) {
 	worker.log.Warn("attempt failed", "reason", string(reason))
+	worker.window.Printf("打洞失败（%s）", string(reason))
 	worker.emit(WorkerEvent{PeeringID: worker.peering, Token: worker.token, Kind: WorkerFailed, Reason: reason})
 }
 

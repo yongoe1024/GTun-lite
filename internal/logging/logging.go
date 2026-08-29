@@ -14,6 +14,7 @@ import (
 
 // Options 描述日志输出。File 与 ErrorFile 均可选：未设置的流回落到
 // stderr，保持交互运行时的既有行为（只配其一则另一类日志仍走 stderr）。
+// 配置了文件的流不再镜像 stderr——窗口实时提示由 notice 包单独承担。
 type Options struct {
 	// Level 是 debug/info/warn/error，空串按 info。
 	Level string
@@ -42,9 +43,9 @@ func New(options Options) (*slog.Logger, func(), error) {
 			closeAll()
 			return nil, nil, fmt.Errorf("open log file: %w", err)
 		}
-		// 双写：文件 + stderr。窗口实时可看，文件可回查；后台部署
-		// （nohup >/dev/null 等）丢弃 stderr 即纯文件，互不干扰。
-		infoWriter = io.MultiWriter(file, os.Stderr)
+		// 配置了文件即纯文件落盘：窗口只留 notice 通道的中文关键状态
+		// 提示，详细日志不刷屏；后台部署本就丢弃 stderr，互不干扰。
+		infoWriter = file
 		closers = append(closers, func() { _ = file.Close() })
 	}
 	if options.ErrorFile != "" {
@@ -53,7 +54,7 @@ func New(options Options) (*slog.Logger, func(), error) {
 			closeAll()
 			return nil, nil, fmt.Errorf("open error log file: %w", err)
 		}
-		errWriter = io.MultiWriter(file, os.Stderr)
+		errWriter = file
 		closers = append(closers, func() { _ = file.Close() })
 	}
 	handlerOptions := &slog.HandlerOptions{Level: level}

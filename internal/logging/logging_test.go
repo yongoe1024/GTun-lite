@@ -75,9 +75,9 @@ func TestAppendMode(t *testing.T) {
 	}
 }
 
-// TestFileConfigDualSink 配置了文件即「文件 + stderr」双写（默认行为，
-// 与启动方式无关）。
-func TestFileConfigDualSink(t *testing.T) {
+// TestFileConfigPureFile 配置了文件即纯文件落盘，不镜像 stderr——窗口
+// 实时提示由 notice 包单独承担（2026-08-29 起分流）。
+func TestFileConfigPureFile(t *testing.T) {
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "gtun.log")
 	errPath := filepath.Join(dir, "gtun.err")
@@ -100,8 +100,8 @@ func TestFileConfigDualSink(t *testing.T) {
 	if body := readFile(t, errPath); !strings.Contains(body, "dual-error") || strings.Contains(body, "dual-info") {
 		t.Errorf("error file must hold error only: %q", body)
 	}
-	if body := readFile(t, redirected.Name()); !strings.Contains(body, "dual-info") || !strings.Contains(body, "dual-error") {
-		t.Errorf("stderr must mirror both records: %q", body)
+	if body := readFile(t, redirected.Name()); body != "" {
+		t.Errorf("stderr must stay silent when files configured: %q", body)
 	}
 }
 

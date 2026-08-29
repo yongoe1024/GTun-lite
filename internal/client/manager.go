@@ -5,6 +5,7 @@ import (
 	"sync"
 
 	"gtun-lite/internal/common"
+	"gtun-lite/internal/notice"
 	"gtun-lite/internal/tun"
 )
 
@@ -27,6 +28,7 @@ import (
 type Manager struct {
 	mu         sync.Mutex
 	log        *slog.Logger
+	window     *notice.Notice
 	config     ClientConfig
 	device     common.DeviceID
 	opener     tun.Opener
@@ -47,9 +49,10 @@ type Manager struct {
 
 // NewManager 创建管理器。opener 与 routeTable 由调用方注入
 // （生产用平台实现，测试用假实现），manager 不感知平台差异。
-func NewManager(config ClientConfig, device common.DeviceID, opener tun.Opener, routeTable tun.RouteTable, log *slog.Logger) *Manager {
+func NewManager(config ClientConfig, device common.DeviceID, opener tun.Opener, routeTable tun.RouteTable, log *slog.Logger, window *notice.Notice) *Manager {
 	return &Manager{
 		log:        log,
+		window:     window,
 		config:     config,
 		device:     device,
 		opener:     opener,
@@ -269,7 +272,7 @@ func (manager *Manager) HandleConnect(message *common.Connect) {
 	}
 	manager.workers[message.PeeringID] = startLinkWorker(
 		manager.config, manager.device, message.Token, message.PeeringID, message.Peer,
-		manager.localIP(), manager.deliverInbound, manager.events, manager.log)
+		manager.localIP(), manager.deliverInbound, manager.events, manager.log, manager.window)
 	manager.log.Info("connect received", "peering_id", string(message.PeeringID), "peer", string(message.Peer.DeviceID), "token", string(message.Token))
 }
 
@@ -282,8 +285,13 @@ func (manager *Manager) HandleDisconnect(message *common.Disconnect) {
 		manager.log.Warn("disconnect token differs from current attempt",
 			"peering_id", string(message.PeeringID), "current", string(worker.token), "disconnect", string(message.Token))
 	}
+	_, hadWorker := manager.workers[message.PeeringID]
 	manager.stopWorker(message.PeeringID)
 	manager.log.Info("disconnect received", "peering_id", string(message.PeeringID))
+	// 确有存活的 Worker 被停掉才向窗口报「隧道已关闭」，陈旧指令保持安静。
+	if hadWorker {
+		manager.window.Printf("隧道已关闭")
+	}
 }
 
 // HandlePeerProfile 把服务器配对出的对端画像投递给对应 Worker。
@@ -297,6 +305,8 @@ func (manager *Manager) HandlePeerProfile(message *common.PeerProfile) {
 		return
 	}
 	worker.deliverPeerProfile(message.Profile)
+	manager.window.Printf("收到对方 NAT 信息：%s（公网 IP %s）",
+		notice.NAT(message.Profile.NAT), string(message.Profile.PublicIP))
 }
 
 // applyEvent 把 Worker 里程碑落到管理器视图：建成即注册数据面出站队列

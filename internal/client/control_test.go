@@ -239,8 +239,8 @@ func runClient(t *testing.T, config client.ClientConfig, identity string, opener
 	t.Helper()
 	done := make(chan error, 1)
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	manager := client.NewManager(config, common.DeviceID(identity), opener, fakeRouteTable{}, log)
-	control := client.NewControlClient(config, manager, common.DeviceID(identity), log)
+	manager := client.NewManager(config, common.DeviceID(identity), opener, fakeRouteTable{}, log, nil)
+	control := client.NewControlClient(config, manager, common.DeviceID(identity), log, nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() { done <- control.Run(ctx) }()
 	t.Cleanup(func() {
@@ -791,8 +791,8 @@ func runClientAt(t *testing.T, controlAddr string, probePort int, identityPath, 
 	config := clientConfig(controlAddr, probePort, identityPath)
 	done := make(chan error, 1)
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	manager := client.NewManager(config, common.DeviceID(identity), opener, fakeRouteTable{}, log)
-	control := client.NewControlClient(config, manager, common.DeviceID(identity), log)
+	manager := client.NewManager(config, common.DeviceID(identity), opener, fakeRouteTable{}, log, nil)
+	control := client.NewControlClient(config, manager, common.DeviceID(identity), log, nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() { done <- control.Run(ctx) }()
 	t.Cleanup(func() {

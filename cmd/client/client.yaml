@@ -30,5 +30,5 @@ punch:
   helper_count: 256            # 256 / 512 / 1024 三档，其他值拒绝启动
 logging:
   level: "info"                # debug/info/warn/error；打洞排障开 debug
-  file: "gtun-client.log"      # 可选项：删去或留空即回落 stderr；随包默认开启。配置即「文件+窗口」双写
+  file: "gtun-client.log"      # 可选项：删去或留空即回落 stderr；随包默认开启。配置即纯文件落盘，窗口只显示中文关键状态提示
   error_file: "gtun-client.error.log" # 可选项：错误日志（warn 及以上）单独落盘
