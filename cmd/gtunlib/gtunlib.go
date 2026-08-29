@@ -137,6 +137,10 @@ func run(ctx context.Context, configPath string) {
 
 	manager := client.NewManager(config, identity, client.PlatformOpener(), stubRouteTable{}, log, window)
 	defer manager.Close()
+	// fd 交付协议接线：androidfd.Opener 要 fd 时经此回调宿主（VpnService
+	// establish 后 ProvideTunFd 送回）。漏接这根线，开栈必然
+	// 「requester not set」→ TUN_CREATE_FAILED。
+	androidfd.SetTunRequester(tunRequestAdapter{currentListener()})
 	control := client.NewControlClient(config, manager, identity, log, window)
 
 	log.Info("gtun-lite session started", "device_id", string(identity), "server", config.Server.Addr)
@@ -180,5 +184,21 @@ func newNoticePipe() io.Writer {
 func notifyNotice(line string) {
 	if l, ok := listener.Load().(EventListener); ok && l != nil {
 		l.Notice(line)
+	}
+}
+
+// currentListener 取当前宿主回调；未注册返回 nil。
+func currentListener() EventListener {
+	l, _ := listener.Load().(EventListener)
+	return l
+}
+
+// tunRequestAdapter 把宿主 EventListener 适配成 androidfd.TunRequester。
+type tunRequestAdapter struct{ l EventListener }
+
+// RequestTun 转发内核的建 TUN 请求（宿主 establish 后须调 ProvideTunFd）。
+func (adapter tunRequestAdapter) RequestTun(mtu int64, localIP string, peers string) {
+	if adapter.l != nil {
+		adapter.l.TunRequest(mtu, localIP, peers)
 	}
 }
