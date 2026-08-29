@@ -21,7 +21,7 @@ build-darwin: ## 构建 macOS amd64 程序包到 bin/darwin/{client,server}/（�
 	rm -rf bin/darwin
 	GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 $(GO) build $(LDFLAGS) -o bin/darwin/client/gtun-client ./cmd/client
 	cp cmd/client/client.yaml bin/darwin/client/client.yaml
-	cp cmd/client/gtun-client.command bin/darwin/client/gtun-client.command
+	cp cmd/client/双击启动.command bin/darwin/client/双击启动.command
 	GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 $(GO) build $(LDFLAGS) -o bin/darwin/server/gtun-server ./cmd/server
 	cp cmd/server/server.yaml bin/darwin/server/server.yaml
 	@echo "macOS amd64 packages: bin/darwin/client/ bin/darwin/server/"
@@ -30,7 +30,7 @@ build-darwin-arm64: ## 构建 macOS arm64 程序包到 bin/darwin-arm64/{client,
 	rm -rf bin/darwin-arm64
 	GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 $(GO) build $(LDFLAGS) -o bin/darwin-arm64/client/gtun-client ./cmd/client
 	cp cmd/client/client.yaml bin/darwin-arm64/client/client.yaml
-	cp cmd/client/gtun-client.command bin/darwin-arm64/client/gtun-client.command
+	cp cmd/client/双击启动.command bin/darwin-arm64/client/双击启动.command
 	GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 $(GO) build $(LDFLAGS) -o bin/darwin-arm64/server/gtun-server ./cmd/server
 	cp cmd/server/server.yaml bin/darwin-arm64/server/server.yaml
 	@echo "macOS arm64 packages: bin/darwin-arm64/client/ bin/darwin-arm64/server/"

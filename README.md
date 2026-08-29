@@ -66,7 +66,7 @@ server:
 sudo ./gtun-client -config client.yaml   # macOS / Linux
 ```
 
-macOS 也可直接双击程序包内的 `gtun-client.command`（终端内提权，
+macOS 也可直接双击程序包内的 `双击启动.command`（终端内提权，
 日志实时显示）。
 
 Windows 双击 `gtun-client.exe` 并确认 UAC 提权即可（exe 已内嵌管理员
