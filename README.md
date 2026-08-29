@@ -20,11 +20,11 @@
 - **Web 管理台**：建网、成员、配对、链路操作全图形化，失败原因中文
   直读，无需登服务器查日志
 
-![管理页](设计文档/images/admin-console.png)
+![管理页](images/admin-console.png)
 
 ## 架构
 
-![GTun-Lite 系统架构](设计文档/images/architecture.svg)
+![GTun-Lite 系统架构](images/architecture.svg)
 
 服务器承载控制面、探测反射器与管理 API，三者均为轻负载；管理 API 默认
 只绑 `127.0.0.1:9090`。
@@ -66,8 +66,8 @@ server:
 sudo ./gtun-client -config client.yaml   # macOS / Linux
 ```
 
-macOS 也可直接双击程序包内的 `双击启动.command`（终端内提权，
-日志实时显示）。
+macOS 也可直接双击程序包内的 `双击启动.command`（终端内提权，窗口实时
+显示中文关键状态提示，详细日志落 `gtun-client.log`）。
 
 Windows 双击 `gtun-client.exe` 并确认 UAC 提权即可（exe 已内嵌管理员
 manifest）；`wintun.dll` 须与 exe 同目录。
@@ -78,10 +78,12 @@ manifest）；`wintun.dll` 须与 exe 同目录。
 
 浏览器访问 `http://127.0.0.1:9090`（跨机访问走 SSH 隧道）：
 
-1. 「网络」视图建网，网段建议选 `10.206.x.0/24` 等冷门段，避开物理 LAN
-2. 网络详情中将设备加入成员，虚拟 IP 自动分配
-3. 选择两台成员建立配对
-4. 「链路」视图下发建链，状态 `CONNECTED` 即通
+1. 「设备」视图：客户端启动后会出现在**待加入列表**，点「同意注册」后
+   才能入网（新设备只存服务器内存，断开即从待加入列表消失，重连重现）
+2. 「网络」视图建网，网段建议选 `10.206.x.0/24` 等冷门段，避开物理 LAN
+3. 网络详情中将设备加入成员，虚拟 IP 自动分配
+4. 选择两台成员建立配对
+5. 「链路」视图下发建链，状态 `CONNECTED` 即通
 
 ### 4. 验证
 
@@ -102,10 +104,10 @@ ping <对端虚拟IP>
 
 | 两侧 NAT 组合 | 穿透路径 | 预算 |
 |---|---|---|
-| stable × stable | 直连映射端点 | 5s |
+| stable × stable | 直连映射端点 | 2s |
 | stable × variable | helper 信标 + 反向握手 + OK 补发为主路径；Range 邻域扫描备援 | 15s |
 | variable × variable | 预判拒绝（`NAT_UNSUPPORTED`） | — |
-| 出口 IP 按流轮换（部分家宽） | 探测即拒（`PROBE_IP_CHANGED`） | — |
+| 出口 IP 按流轮换（部分家宽） | 探测取首个回显 IP 继续打洞，不直接拒绝；真机实证此类环境下 stable × stable 仍难打通 | 15s |
 | 同一路由器后互打 | 依赖路由器 hairpin/回环支持，家用路由器多数不支持 | — |
 
 真机验收记录见 [test/e2e/真机验收记录.md](test/e2e/真机验收记录.md)。
@@ -125,7 +127,7 @@ ping <对端虚拟IP>
 | 现象 | 原因与处置 |
 |---|---|
 | Windows 虚拟 IP ping 不通，其余方向正常 | Windows 防火墙默认拦截入站 ICMP，见「快速开始 · 验证」的放行命令 |
-| 链路页红字「出口 IP 轮换」 | 家宽按流轮换出口 IP，属环境特性；多重试几次或换网络（如蜂窝热点） |
+| 打洞反复失败，日志见 `probe observed rotating public IPs` | 家宽按流轮换出口 IP，属环境特性（真机实证 stable × stable 难打通）；换网络（如蜂窝热点）最有效 |
 | 「双方 NAT 均不可预测」 | 双 variable 组合无可用路径，环境上限 |
 | 「打洞超时」 | NAT 严格或路径黑洞；可重试，或上调 `punch.helper_count` 档位（256/512/1024） |
 | 设备显示离线 | 客户端进程退出或网络中断；恢复后 5s 内自动重连 |
