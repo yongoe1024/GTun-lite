@@ -29,6 +29,10 @@
 服务器承载控制面、探测反射器与管理 API，三者均为轻负载；管理 API 默认
 只绑 `127.0.0.1:9090`。
 
+安卓端：同一内核经 gomobile 编译为 aar，由宿主壳（VpnService）驱动——
+fd 交付协议、构建版本要求与机制见 [docs/android.md](docs/android.md)，
+aar 产物 `make build-android-lib`。
+
 ## 快速开始
 
 要求：一台具有公网 IP 的服务器；客户端对 TUN 设备有权限（macOS/Linux
