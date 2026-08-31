@@ -152,19 +152,31 @@ func (owner *Hub) run() {
 		case command := <-owner.commands:
 			command(state)
 		case <-owner.stop:
-			// 停机时主动断开全部会话；链路状态就此丢弃，这是设计行为：
-			// 它是纯内存缓存，客户端重连全量上报即重建。
-			for _, sess := range state.sessions {
-				sess.end()
+			// 停机先排干已入队的命令再退出：submit 的契约是 err 非 nil ⇔
+			// 未生效，排干让「入队成功」与「必然执行」重新等价。收敛保证：
+			// commands 无缓冲，本循环退出后再无接收者，排队段的新命令必然
+			// 落入 stop 分支被拒，不会出现永远排不完的队列。
+			for {
+				select {
+				case command := <-owner.commands:
+					command(state)
+				default:
+					// 停机时主动断开全部会话；链路状态就此丢弃，这是设计行为：
+					// 它是纯内存缓存，客户端重连全量上报即重建。
+					for _, sess := range state.sessions {
+						sess.end()
+					}
+					return
+				}
 			}
-			return
 		}
 	}
 }
 
-// submit 把操作排入 owner 并等它执行完。排队阶段响应取消与停机；
-// 执行阶段不再响应取消——操作已经开始，半途丢弃会留下未完成的副作用
-// （例如 CONNECT 只发到一侧）。
+// submit 把操作排入 owner 并等它执行完，返回值契约：err 非 nil ⇔ 命令
+// 未生效。排队阶段响应取消与停机（此时命令尚未入队，丢弃无副作用）；
+// 入队成功后由 owner 的停机排干保证执行（见 run），这里只等 done——
+// 若中途对停机让步，已执行完的命令会被误报为未生效。
 func (owner *Hub) submit(ctx context.Context, execute func(*hubState)) error {
 	done := make(chan struct{})
 	select {
@@ -174,12 +186,8 @@ func (owner *Hub) submit(ctx context.Context, execute func(*hubState)) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	}
-	select {
-	case <-done:
-		return nil
-	case <-owner.stop:
-		return ErrServerClosed
-	}
+	<-done
+	return nil
 }
 
 // Close 停止 owner 并断开全部会话。

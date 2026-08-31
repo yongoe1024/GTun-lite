@@ -103,9 +103,18 @@ func (reflector *ProbeReflector) ListenAndServe(ctx context.Context) error {
 	}
 	reflector.sockets = sockets
 	reflector.mu.Unlock()
+	// 停机关闭走 ctx；本函数返回（含 fail-fast）经 watchDone 结束监视，
+	// 两条路径都收敛，监视 goroutine 不依赖进程退出来终结。fail-fast 的
+	// 资源清理由上方 closeSockets 完成，不再 defer Close——Close 会等待
+	// 退出信号，而退出以本函数返回为前提，defer 它构成循环等待。
+	watchDone := make(chan struct{})
+	defer close(watchDone)
 	go func() {
-		<-ctx.Done()
-		reflector.Close()
+		select {
+		case <-ctx.Done():
+			reflector.Close()
+		case <-watchDone:
+		}
 	}()
 
 	serveErr := make(chan error, probeSocketCount)
