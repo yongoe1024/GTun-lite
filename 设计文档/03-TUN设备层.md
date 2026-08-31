@@ -109,9 +109,9 @@ type Opener interface {
 5. 配置（`win/route_windows.go`）：netsh 配静态地址与 MTU、装对端 /32 路由。
 6. **关闭四步排空协议**（真机 0xc0000005 崩溃教训）：① `closed` CAS 置位 → ② `WintunEndSession` 唤醒等待 → ③ `inFlight.Wait()` 等在途 Read/Write 排空（每次调用全程 Add/Done）→ ④ 才 `WintunCloseAdapter` 释放内存。DLL 调用用 `syscall.SyscallN` 直调函数地址（vet 的 unsafe 白名单覆盖 SyscallN 而不覆盖 LazyProc.Call）。
 
-### 4.4 两平台共同教训：fd 必须先非阻塞再 NewFile
+### 4.4 两平台共同约束：fd 必须先非阻塞再 NewFile
 
-阻塞 fd 交给 `os.NewFile` 不会进入 Go runtime poller，`Close()` 无法唤醒阻塞中的读循环——优雅退出永久卡死在 `wg.Wait()`（Go 文档化行为，golang/go#22939）。故必须先非阻塞再 NewFile。macOS 曾用「阻塞读 + 弃置 goroutine」绕路，2026-08-27 对照实验后统一切换为非阻塞 + poller，弃置机制已删除（档案见 [真机验收记录.md](../test/e2e/真机验收记录.md)）。
+阻塞 fd 交给 `os.NewFile` 不会进入 Go runtime poller，`Close()` 无法唤醒阻塞中的读循环——优雅退出会永久卡死在 `wg.Wait()`（Go 文档化行为，golang/go#22939）。因此平台实现打开 fd 后、`os.NewFile` 前必须置非阻塞，`Close` 才能经 poller 唤醒读循环退出（对照实验档案见 [真机验收记录.md](../test/e2e/真机验收记录.md)）。
 
 ## 5. 路由体系
 
@@ -138,7 +138,7 @@ type Opener interface {
 
 **残留路由分两层处理**（开栈前由 `CleanupDanglingHostRoutes` 先行清理）：
 
-- **悬空残留（自动清理）**：异常退出（崩溃/强杀/断电）会留下指向**已拆接口**的 /32——绑定接口已消失，归属零歧义，开栈前自动删除，不再需要人工 `route delete`；
+- **悬空残留（自动清理）**：异常退出（崩溃/强杀/断电）会留下指向**已拆接口**的 /32——绑定接口已消失，归属零歧义，开栈前自动删除；
 - **活跃冲突（如实报错）**：指向现存接口的 /32 一律报 ErrRouteConflict——可能是其他 VPN 的真实路由，清理责任仍交运维，不静默接管。判定失败（解析不出绑定接口）同样保守按冲突处理。
 
 幂等的重应用不靠豁免，仍由 manager 的「拓扑未变不重建 + 重建前先拆干净」保证（见 [04-客户端.md](04-客户端.md)）。

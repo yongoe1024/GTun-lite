@@ -3,20 +3,13 @@
 //
 // 与 mac/linux/win 三个平台实现的本质差异：这个平台的 TUN 不是本包自己打开
 // 的。establish() 必须由宿主壳层在拿到虚拟 IP 之后调用——VPN 授权框也只能由
-// 宿主弹出——所以 Open 的时序变成「内核要 fd → 同步回调宿主 → 宿主授权并
-// establish → 返回 fd」。fd 是一次性资源：os.File 关闭即 fd 失效，每次栈重建
-// 都必须重新走一遍交付流程，不做任何缓存。
+// 宿主弹出——所以 Open 的时序是「内核要 fd → 同步回调宿主 → 宿主 establish
+// → 返回 fd」。前提：授权在会话启动前由宿主解决，establish 不做 UI 操作，
+// 同步等待无阻塞风险。fd 是一次性资源：os.File 关闭即失效，每次栈重建都
+// 重新走一遍交付。
 //
-// 交付协议是同步请求-应答：RequestTun 在宿主侧完成 establish 后直接返回 fd
-// （错误经 error 返回，gomobile 映射为 Java 异常）。不做异步回调与跨会话
-// 暂存——授权（consent）由宿主在会话启动前解决（GtunRuntime 先
-// VpnService.prepare 再 Start），establish 是纯系统调用不碰 UI，同步等待
-// 没有阻塞风险；而异步形态要求「等待-放弃-暂存」跨会话状态机，其生命周期
-// 对齐错误曾连出三个 bug（漏接线 / Abandon 跨会话泄漏 / 随机二选一），
-// 这里按「同步优先、状态随会话」的原则刻意不做。
-//
-// 路由与地址由 VpnService.Builder 声明式下发（随 VPN 接口生灭，无系统残留），
-// 本包不做任何系统路由操作；RouteCleanup 因此只负责关闭设备。
+// 路由与地址由 VpnService.Builder 声明式下发（随 VPN 接口生灭），本包不做
+// 任何系统路由操作；RouteCleanup 只负责关闭设备。
 package androidfd
 
 import (
@@ -25,6 +18,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 
 	"gtun-lite/internal/common"
 	"gtun-lite/internal/tun"
@@ -41,12 +35,19 @@ type TunRequester interface {
 	RequestTun(mtu int64, localIP string, peers string) (int64, error)
 }
 
-// requester 是当前注册的宿主回调。它只描述「宿主是谁」，不承载任何会话
-// 状态——会话状态全部活在 Open 的调用栈里，Stop 之后不存在悬挂的等待者。
-var requester TunRequester
+// requester 是当前注册的宿主回调，mu 保护注册与 Open 读取的并发
+// （注册发生在会话 goroutine，Open 发生在控制面读循环 goroutine）。
+var (
+	mu        sync.Mutex
+	requester TunRequester
+)
 
-// SetTunRequester 注册宿主回调。会话启动时调用；重复调用直接覆盖。
-func SetTunRequester(r TunRequester) { requester = r }
+// SetTunRequester 注册宿主回调。会话启动时调用；覆盖式。
+func SetTunRequester(r TunRequester) {
+	mu.Lock()
+	defer mu.Unlock()
+	requester = r
+}
 
 // Device 是基于既有 fd 的 TUN 设备。Android 的 VpnService fd 读写裸 IPv4 包，
 // 无任何平台前缀，是全平台最薄的 Device 实现。
@@ -75,11 +76,13 @@ func (device *Device) Close() error { return device.f.Close() }
 // Opener 实现 tun.Opener：向宿主同步请求 fd 并包装为 Device。
 type Opener struct{}
 
-// Open 同步获取 fd 并包装为 Device。会话停止（ctx 取消）后到达的 fd 一样
-// 正常返回——由调用方按栈生命周期关闭；不存在需要被打断的等待。
+// Open 同步获取 fd 并包装为 Device。
 func (Opener) Open(ctx context.Context, name string, mtu int, localIP common.IPv4, peers []common.IPv4) (tun.Device, tun.RouteCleanup, error) {
 	_ = ctx
-	if requester == nil {
+	mu.Lock()
+	r := requester
+	mu.Unlock()
+	if r == nil {
 		return nil, tun.RouteCleanup{}, errors.New("android tun requester not set")
 	}
 	fdValue, err := requester.RequestTun(int64(mtu), string(localIP), joinIPs(peers))

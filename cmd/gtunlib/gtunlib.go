@@ -44,7 +44,10 @@ var (
 	listener atomic.Value // EventListener
 	mu       sync.Mutex
 	cancel   context.CancelFunc
-	running  bool
+	// session 是会话代次，Start 递增。收尾清理以它做会话身份：
+	// CancelFunc 不可比较，无法直接判「自己是否现任」。
+	session uint64
+	running bool
 )
 
 // SetListener 注册宿主事件回调。Start 前调用；传 nil 清除。
@@ -64,16 +67,17 @@ func Start(configPath string) error {
 		return err
 	}
 	running = true
+	session++
+	mySession := session
 	ctx, stop := context.WithCancel(context.Background())
 	cancel = stop
 	mu.Unlock()
-	go run(ctx, configPath)
+	go run(ctx, configPath, mySession)
 	return nil
 }
 
 // Stop 停止当前会话：取消 context，控制面断连、Worker 拆除、TUN 关闭。
-// 幂等。fd 交付是同步请求-应答，不存在需要打断的等待者；会话停止后
-// 迟到的 fd 由调用方按栈生命周期关闭。
+// 幂等。
 func Stop() error {
 	mu.Lock()
 	c := cancel
@@ -94,12 +98,16 @@ func IsRunning() bool {
 }
 
 // run 是会话主体，序列与 cmd/client 的 run 一致（差别仅：无信号、ctx 由
-// Stop 控制、提示走 EventListener 而非 stderr）。
-func run(ctx context.Context, configPath string) {
+// Stop 控制、提示走 EventListener 而非 stderr）。mySession 是本会话代次，
+// 用作会话身份：收尾清理仅在「自己仍是现任会话」时执行——Stop 后立即
+// Start 的新会话不受旧 goroutine 迟到退出的影响。
+func run(ctx context.Context, configPath string, mySession uint64) {
 	defer func() {
 		mu.Lock()
-		running = false
-		cancel = nil
+		if session == mySession {
+			running = false
+			cancel = nil
+		}
 		mu.Unlock()
 		notifyNotice("GTun 会话已结束")
 	}()
@@ -136,9 +144,7 @@ func run(ctx context.Context, configPath string) {
 
 	manager := client.NewManager(config, identity, client.PlatformOpener(), stubRouteTable{}, log, window)
 	defer manager.Close()
-	// fd 交付协议接线：androidfd.Opener 要 fd 时经此同步回调宿主
-	// （VpnService establish 后返回 fd）。不接线开栈必然
-	// 「requester not set」→ TUN_CREATE_FAILED。
+	// fd 交付回调注册：Open 经 androidfd.TunRequester 向宿主要 fd。
 	androidfd.SetTunRequester(tunRequestAdapter{currentListener()})
 	control := client.NewControlClient(config, manager, identity, log, window)
 
