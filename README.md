@@ -30,7 +30,7 @@
 只绑 `127.0.0.1:9090`。
 
 安卓端：同一内核经 gomobile 编译为 aar，由宿主壳（VpnService）驱动——
-fd 交付协议、构建版本要求与机制见 [docs/android.md](docs/android.md)，
+fd 交付协议、构建版本要求与机制见 [设计文档/09-安卓内核.md](设计文档/09-安卓内核.md)，
 aar 产物 `make build-android-lib`。
 
 ## 快速开始

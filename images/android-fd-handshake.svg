@@ -1,0 +1,84 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="650" viewBox="0 0 960 650" font-family="-apple-system,'PingFang SC','Hiragino Sans GB',sans-serif">
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#37474f"/>
+    </marker>
+    <marker id="arrB" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#1565c0"/>
+    </marker>
+    <marker id="arrG" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#2e7d32"/>
+    </marker>
+  </defs>
+
+  <rect width="960" height="650" fill="#fafafa"/>
+  <text x="480" y="32" text-anchor="middle" font-size="17" font-weight="600" fill="#263238">fd 交付协议时序(同步请求-应答)</text>
+
+  <!-- 参与者 -->
+  <rect x="30"  y="48" width="150" height="30" rx="4" fill="#607d8b"/>
+  <rect x="230" y="48" width="190" height="30" rx="4" fill="#43a047"/>
+  <rect x="470" y="48" width="210" height="30" rx="4" fill="#1e88e5"/>
+  <rect x="740" y="48" width="190" height="30" rx="4" fill="#8e24aa"/>
+  <text x="105" y="68" text-anchor="middle" font-size="13" fill="#fff">服务端</text>
+  <text x="325" y="68" text-anchor="middle" font-size="13" fill="#fff">Go 内核(libgojni)</text>
+  <text x="575" y="68" text-anchor="middle" font-size="13" fill="#fff">Java 壳(GtunVpnService)</text>
+  <text x="835" y="68" text-anchor="middle" font-size="13" fill="#fff">安卓系统(VpnService)</text>
+
+  <!-- 生命线 -->
+  <line x1="105" y1="78" x2="105" y2="612" stroke="#b0bec5" stroke-dasharray="4 4"/>
+  <line x1="325" y1="78" x2="325" y2="612" stroke="#b0bec5" stroke-dasharray="4 4"/>
+  <line x1="575" y1="78" x2="575" y2="612" stroke="#b0bec5" stroke-dasharray="4 4"/>
+  <line x1="835" y1="78" x2="835" y2="612" stroke="#b0bec5" stroke-dasharray="4 4"/>
+
+  <!-- ① 下发配置 -->
+  <line x1="105" y1="108" x2="318" y2="108" stroke="#37474f" stroke-width="1.4" marker-end="url(#arr)"/>
+  <text x="212" y="100" text-anchor="middle" font-size="12" fill="#37474f">① 下发网络配置(虚拟 IP · 对端列表)</text>
+
+  <!-- ② 自消息:开栈 -->
+  <rect x="333" y="126" width="270" height="24" rx="3" fill="#e8f5e9" stroke="#43a047"/>
+  <text x="341" y="142" font-size="12" fill="#2e7d32">② ApplyConfig → 拓扑变化 → 开栈 Opener.Open</text>
+
+  <!-- ③ 同步回调 -->
+  <line x1="325" y1="182" x2="568" y2="182" stroke="#1565c0" stroke-width="2.2" marker-end="url(#arrB)"/>
+  <text x="447" y="174" text-anchor="middle" font-size="12.5" font-weight="600" fill="#1565c0">③ tunRequest(mtu, localIP, peers) — 同步调用(跨 JNI)</text>
+
+  <!-- 说明:授权前置 -->
+  <rect x="470" y="200" width="460" height="40" rx="4" fill="#fffde7" stroke="#f9a825"/>
+  <text x="482" y="216" font-size="11.5" fill="#6d4c00">授权已由 prepare() 在会话启动前完成(每设备一次);</text>
+  <text x="482" y="232" font-size="11.5" fill="#6d4c00">establish() 是纯系统调用不碰 UI → 同步等待无阻塞风险</text>
+
+  <!-- ④ establish -->
+  <line x1="575" y1="268" x2="828" y2="268" stroke="#37474f" stroke-width="1.4" marker-end="url(#arr)"/>
+  <text x="701" y="260" text-anchor="middle" font-size="12" fill="#37474f">④ establish():setMtu(1456) · addAddress(/32) · addRoute(对端 /32)</text>
+
+  <!-- ⑤ 自消息:建网卡 -->
+  <rect x="843" y="286" width="100" height="24" rx="3" fill="#f3e5f5" stroke="#8e24aa"/>
+  <text x="851" y="302" font-size="12" fill="#6a1b9a">⑤ 建 VPN 网卡</text>
+
+  <!-- ⑥ 返回 fd -->
+  <line x1="835" y1="338" x2="582" y2="338" stroke="#37474f" stroke-width="1.4" marker-end="url(#arr)"/>
+  <text x="701" y="330" text-anchor="middle" font-size="12" fill="#37474f">fd(ParcelFileDescriptor)</text>
+
+  <!-- ⑦ 自消息:detach -->
+  <rect x="583" y="356" width="230" height="24" rx="3" fill="#e3f2fd" stroke="#1e88e5"/>
+  <text x="591" y="372" font-size="12" fill="#1565c0">detachFd()(所有权移交,防双重关闭)</text>
+
+  <!-- ⑧ 返回内核 -->
+  <line x1="575" y1="408" x2="332" y2="408" stroke="#2e7d32" stroke-width="2.2" marker-end="url(#arrG)"/>
+  <text x="453" y="400" text-anchor="middle" font-size="12.5" font-weight="600" fill="#2e7d32">⑧ return fd —— 失败则 throw,原因随链路上报</text>
+
+  <!-- ⑨ 自消息:包装 -->
+  <rect x="333" y="426" width="300" height="24" rx="3" fill="#e8f5e9" stroke="#43a047"/>
+  <text x="341" y="442" font-size="12" fill="#2e7d32">⑨ os.NewFile(fd) → tun.Device → 数据面读写循环</text>
+
+  <!-- 异常路径注记 -->
+  <text x="325" y="478" font-size="11.5" fill="#c62828">异常路径:Exception → TUN_CREATE_FAILED → 界面与服务端显示中文原因</text>
+
+  <!-- 大注释:后续流程 -->
+  <rect x="30" y="506" width="900" height="60" rx="4" fill="#e8eaf6" stroke="#5c6bc0" stroke-dasharray="5 3"/>
+  <text x="44" y="528" font-size="12" fill="#283593">同一会话内,此后:服务端 CONNECT(自动重试)→ 探测画像 → 两侧同 token 配对 → 打洞(UDP)→ 数据面注册链路 → 真实流量。</text>
+  <text x="44" y="548" font-size="12" fill="#283593">隧道流量两端直连不经服务器。断开再连 / 拓扑变化 → 重新走一遍 ②~⑨:fd 一次性,每次开栈都重新 establish(设计使然,非浪费)。</text>
+
+  <!-- 页脚 -->
+  <text x="480" y="638" text-anchor="middle" font-size="11" fill="#90a4ae">gtun-lite · 设计文档/09-安卓内核.md · 同步请求-应答:状态活在 Open 调用栈,无跨会话等待者</text>
+</svg>
