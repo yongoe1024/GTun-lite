@@ -202,19 +202,44 @@ func (owner *Hub) Register(ctx context.Context, sess *session, registration *com
 }
 
 // register 是注册的 owner 内实现。顶替顺序：先落库（或记待审批），再顶旧
+// pendingDeviceLimit 是待审批连接的独立上限。不进配置：它的职责只是
+// 防未审批连接无限堆积（内存与连接资源），额度与正式容量语义无关，
+// 暴露成配置项徒增调优面。
+const pendingDeviceLimit = 128
+
+// approvedOnlineCount 由现有两张表推导已批准设备的在线数：sessions 含
+// 全部在线会话（批准与否），pendingDevices 的键必是其中待审批的子集。
+// 推导式计数不引入需多点维护的增量状态。
+func approvedOnlineCount(state *hubState) int {
+	pendingOnline := 0
+	for device := range state.pendingDevices {
+		if _, online := state.sessions[device]; online {
+			pendingOnline++
+		}
+	}
+	return len(state.sessions) - pendingOnline
+}
+
 // 会话，最后入表——任何一步失败都不产生半注册状态。
 func (owner *Hub) register(state *hubState, sess *session, registration *common.DeviceRegister) error {
-	// 会话容量在登记前检查：容量之外的连接不该留下任何设备痕迹。
-	// 重连的旧设备不受影响——顶替替换的是既有表项，不增加条目。
-	if _, exists := state.sessions[sess.device]; !exists && len(state.sessions) >= owner.config.Control.MaxConnections {
-		return fmt.Errorf("%w: %d sessions in use", ErrConnectionLimit, owner.config.Control.MaxConnections)
-	}
-	// 注册审批制：库里已有的设备（此前被同意过）照常 upsert 刷新；
-	// 新设备不落库，只记入内存待审批表，等管理页「同意注册」。
+	// 批准状态先行：容量检查按批准与否分流——正式设备的名额只被正式
+	// 设备占用，未审批连接堆满 max_connections 也不该把已批准设备拒之
+	// 门外（server_full）。重连的旧设备不受影响——顶替替换的是既有
+	// 表项，不增加条目。
 	approved, err := owner.store.HasDevice(context.Background(), registration.DeviceID)
 	if err != nil {
 		return fmt.Errorf("check device approved: %w", err)
 	}
+	if _, exists := state.sessions[sess.device]; !exists {
+		if approved && approvedOnlineCount(state) >= owner.config.Control.MaxConnections {
+			return fmt.Errorf("%w: %d sessions in use", ErrConnectionLimit, owner.config.Control.MaxConnections)
+		}
+		if !approved && len(state.pendingDevices) >= pendingDeviceLimit {
+			return fmt.Errorf("%w: %d pending registrations", ErrConnectionLimit, pendingDeviceLimit)
+		}
+	}
+	// 注册审批制：库里已有的设备（此前被同意过）照常 upsert 刷新；
+	// 新设备不落库，只记入内存待审批表，等管理页「同意注册」。
 	if approved {
 		if err := owner.store.UpsertDevice(context.Background(), registration.DeviceID, registration.Name, registration.Platform); err != nil {
 			return fmt.Errorf("persist device: %w", err)
@@ -615,22 +640,31 @@ func (owner *Hub) IssueQuery(ctx context.Context, device common.DeviceID) error 
 
 // PushConfig 给一台在线设备重推全量配置（配置变更后由管理写操作调用）。
 // 离线设备跳过：它重连时注册流程会推首份配置，不需要补发。
-func (owner *Hub) PushConfig(ctx context.Context, device common.DeviceID) {
-	_ = owner.submit(ctx, func(state *hubState) {
+// PushConfig 向设备推送其当前生效配置。不接受调用方 ctx：配置推送是
+// 管理写操作的第二步（库已提交），跟随请求取消会造成「库已变更、在线
+// 端永远不知情」的半提交，客户端要等到下次重连才收敛。推送失败如实记
+// 错误日志；收敛兜底是客户端重连时的全量上报。
+func (owner *Hub) PushConfig(device common.DeviceID) {
+	if err := owner.submit(context.Background(), func(state *hubState) {
 		owner.pushConfig(state, device)
-	})
+	}); err != nil {
+		owner.log.Error("push config after admin write", "device_id", string(device), "error", err)
+	}
 }
 
 // PruneLinks 清除指定设备对的内存链路条目。配对/成员被删除后调用：
 // 链路视图按库里的配对枚举，孤儿条目既不再展示也不再被上报触达，
 // 留着只会随时间累积。
-func (owner *Hub) PruneLinks(ctx context.Context, pairs []common.Link) {
-	_ = owner.submit(ctx, func(state *hubState) {
+func (owner *Hub) PruneLinks(pairs []common.Link) {
+	// 与 PushConfig 同一立场：管理写的后续清理不随请求取消。
+	if err := owner.submit(context.Background(), func(state *hubState) {
 		for _, pair := range pairs {
 			delete(state.links, pair)
 			delete(state.pending, pair)
 		}
-	})
+	}); err != nil {
+		owner.log.Error("prune links after admin write", "error", err)
+	}
 }
 
 // pushConfig 组装并投递一台设备的全量配置。在 owner 内执行保证与
@@ -745,10 +779,16 @@ func (owner *Hub) Snapshot(ctx context.Context) ([]DeviceView, []LinkView, error
 	// 不让「一台设备都没有」在线上表现成 null。
 	devices := make([]DeviceView, 0)
 	links := make([]LinkView, 0)
+	// 查询失败必须原样返回给管理端：闭包内 err := 会遮蔽外层，
+	// 库故障被吞成「成功的空列表」曾让运维面对假数据。设备/网络/
+	// 配对三类是列表的主体，任一失败即整体失败——部分视图违反
+	// 本方法「同一瞬间一致视图」的约定；membership 失败仅记日志，
+	// 该设备网络列显示为空，不拖垮整页。
+	var failure error
 	err := owner.submit(ctx, func(state *hubState) {
 		rows, err := owner.store.ListDevices(context.Background())
 		if err != nil {
-			owner.log.Error("list devices for snapshot", "error", err)
+			failure = fmt.Errorf("list devices: %w", err)
 			return
 		}
 		for _, row := range rows {
@@ -774,14 +814,14 @@ func (owner *Hub) Snapshot(ctx context.Context) ([]DeviceView, []LinkView, error
 		}
 		networks, err := owner.store.ListNetworks(context.Background())
 		if err != nil {
-			owner.log.Error("list networks for snapshot", "error", err)
+			failure = fmt.Errorf("list networks: %w", err)
 			return
 		}
 		for _, network := range networks {
 			peerings, err := owner.store.ListPeerings(context.Background(), network.ID)
 			if err != nil {
-				owner.log.Error("list peerings for snapshot", "error", err)
-				continue
+				failure = fmt.Errorf("list peerings: %w", err)
+				return
 			}
 			for _, peering := range peerings {
 				pair, err := common.NewLink(peering.DeviceA, peering.DeviceB)
@@ -809,7 +849,7 @@ func (owner *Hub) Snapshot(ctx context.Context) ([]DeviceView, []LinkView, error
 			}
 		}
 	})
-	return devices, links, err
+	return devices, links, errors.Join(err, failure)
 }
 
 // linkDeviceNames 把配对行整理成日志可读的两端名称。

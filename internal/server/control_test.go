@@ -717,11 +717,20 @@ func TestConnectWithoutPeering(t *testing.T) {
 	_ = clientB.conn.Close()
 }
 
-// TestConnectionLimitRejected 容量满时第二台设备注册被拒：
+// TestConnectionLimitRejected 容量满时第二台已批准设备注册被拒：
 // 收到 server_full（而非 internal_error）后连接关闭，既有会话不受影响。
+// 容量只计已批准设备——待审批连接不占正式名额（见 register）。
 func TestConnectionLimitRejected(t *testing.T) {
 	server := startTestServer(t, func(config *ServerConfig) { config.Control.MaxConnections = 1 })
-	first := dial(t, server, common.GenerateDeviceID())
+	firstID, secondID := common.GenerateDeviceID(), common.GenerateDeviceID()
+	// 预插两台已批准设备：容量语义针对的是正式成员。
+	if err := server.store.UpsertDevice(context.Background(), firstID, "first", "linux"); err != nil {
+		t.Fatalf("seed first: %v", err)
+	}
+	if err := server.store.UpsertDevice(context.Background(), secondID, "second", "linux"); err != nil {
+		t.Fatalf("seed second: %v", err)
+	}
+	first := dial(t, server, firstID)
 	defer first.conn.Close()
 	first.read(2*time.Second, common.MessageNetworkConfig)
 
@@ -736,7 +745,7 @@ func TestConnectionLimitRejected(t *testing.T) {
 	if initErr != nil {
 		t.Fatalf("line reader: %v", initErr)
 	}
-	second.device = common.GenerateDeviceID()
+	second.device = secondID
 	second.send(&common.DeviceRegister{
 		Type: common.MessageDeviceRegister, DeviceID: second.device,
 		Name: "second", Platform: "linux",
@@ -751,6 +760,26 @@ func TestConnectionLimitRejected(t *testing.T) {
 	}
 	if !deviceOnline(t, server, first.device) {
 		t.Fatal("existing session must be unaffected")
+	}
+}
+
+// TestPendingRegistrationsExemptFromCapacity 待审批连接不占正式容量：
+// 正式名额已满时，未批准设备的注册仍被受理（进待审批表），
+// 由独立的 pendingDeviceLimit 约束。
+func TestPendingRegistrationsExemptFromCapacity(t *testing.T) {
+	server := startTestServer(t, func(config *ServerConfig) { config.Control.MaxConnections = 1 })
+	approvedID, pendingID := common.GenerateDeviceID(), common.GenerateDeviceID()
+	if err := server.store.UpsertDevice(context.Background(), approvedID, "approved", "linux"); err != nil {
+		t.Fatalf("seed approved: %v", err)
+	}
+	occupied := dial(t, server, approvedID)
+	defer occupied.conn.Close()
+	occupied.read(2*time.Second, common.MessageNetworkConfig)
+
+	pending := dial(t, server, pendingID)
+	defer pending.conn.Close()
+	if !deviceOnline(t, server, pendingID) {
+		t.Fatal("pending registration must be accepted despite full approved capacity")
 	}
 }
 

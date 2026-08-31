@@ -81,9 +81,14 @@ func writeError(writer http.ResponseWriter, status int, code, detail string) {
 	writeJSON(writer, status, map[string]string{"code": code, "message": detail})
 }
 
+// maxAdminBody 是管理请求体上限。合法载荷（建网/配对）只有几 KB，
+// 1MB 是宽裕上限；admin 无鉴权，无上限的大 body 是直接的内存耗尽向量。
+const maxAdminBody = 1 << 20
+
 // decodeBody 解析请求体到指定结构。字段类型错误、缺失必填都会在这里报出，
 // 各 handler 拿到的是已通过 JSON 结构检查的值。
 func decodeBody(writer http.ResponseWriter, request *http.Request, target any) bool {
+	request.Body = http.MaxBytesReader(writer, request.Body, maxAdminBody)
 	if err := json.NewDecoder(request.Body).Decode(target); err != nil {
 		writeError(writer, http.StatusBadRequest, "invalid_body", err.Error())
 		return false
@@ -235,7 +240,7 @@ func (api *AdminAPI) deleteNetwork(writer http.ResponseWriter, request *http.Req
 		return
 	}
 	for _, member := range members {
-		api.hub.PushConfig(request.Context(), member.DeviceID)
+		api.hub.PushConfig(member.DeviceID)
 	}
 	pruned := make([]common.Link, 0, len(peerings))
 	for _, peering := range peerings {
@@ -243,7 +248,7 @@ func (api *AdminAPI) deleteNetwork(writer http.ResponseWriter, request *http.Req
 			pruned = append(pruned, pair)
 		}
 	}
-	api.hub.PruneLinks(request.Context(), pruned)
+	api.hub.PruneLinks(pruned)
 	writeJSON(writer, http.StatusOK, map[string]string{"status": "deleted"})
 }
 
@@ -323,9 +328,9 @@ func (api *AdminAPI) addMember(writer http.ResponseWriter, request *http.Request
 	}
 	// 新成员改变了全部老成员的 peers.online 视图，整网重推。
 	for _, member := range members {
-		api.hub.PushConfig(request.Context(), member.DeviceID)
+		api.hub.PushConfig(member.DeviceID)
 	}
-	api.hub.PushConfig(request.Context(), device)
+	api.hub.PushConfig(device)
 	created, err := api.store.Membership(request.Context(), device)
 	if err != nil {
 		writeError(writer, http.StatusInternalServerError, "internal_error", err.Error())
@@ -380,11 +385,11 @@ func (api *AdminAPI) removeMember(writer http.ResponseWriter, request *http.Requ
 	}
 	for _, member := range members {
 		if member.DeviceID != device {
-			api.hub.PushConfig(request.Context(), member.DeviceID)
+			api.hub.PushConfig(member.DeviceID)
 		}
 	}
-	api.hub.PushConfig(request.Context(), device)
-	api.hub.PruneLinks(request.Context(), pruned)
+	api.hub.PushConfig(device)
+	api.hub.PruneLinks(pruned)
 	writeJSON(writer, http.StatusOK, map[string]string{"status": "removed"})
 }
 
@@ -439,8 +444,8 @@ func (api *AdminAPI) createPeering(writer http.ResponseWriter, request *http.Req
 		writeError(writer, http.StatusInternalServerError, "internal_error", err.Error())
 		return
 	}
-	api.hub.PushConfig(request.Context(), link[0])
-	api.hub.PushConfig(request.Context(), link[1])
+	api.hub.PushConfig(link[0])
+	api.hub.PushConfig(link[1])
 	writeJSON(writer, http.StatusCreated, map[string]any{"peering_id": peering})
 }
 
@@ -485,9 +490,9 @@ func (api *AdminAPI) deletePeering(writer http.ResponseWriter, request *http.Req
 		writeError(writer, http.StatusInternalServerError, "internal_error", err.Error())
 		return
 	}
-	api.hub.PushConfig(request.Context(), pair[0])
-	api.hub.PushConfig(request.Context(), pair[1])
-	api.hub.PruneLinks(request.Context(), []common.Link{pair})
+	api.hub.PushConfig(pair[0])
+	api.hub.PushConfig(pair[1])
+	api.hub.PruneLinks([]common.Link{pair})
 	writeJSON(writer, http.StatusOK, map[string]string{"status": "deleted"})
 }
 
@@ -680,10 +685,10 @@ func (api *AdminAPI) deleteDevice(writer http.ResponseWriter, request *http.Requ
 		return
 	}
 	if len(pruned) > 0 {
-		api.hub.PruneLinks(request.Context(), pruned)
+		api.hub.PruneLinks(pruned)
 	}
 	for _, peer := range peers {
-		api.hub.PushConfig(request.Context(), peer)
+		api.hub.PushConfig(peer)
 	}
 	if api.hub.IsOnline(request.Context(), device) {
 		_ = api.hub.Kick(request.Context(), device)

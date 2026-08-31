@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net"
 	"time"
+	"unicode/utf8"
 
 	"gtun-lite/internal/common"
 )
@@ -234,8 +235,24 @@ func (server *ControlServer) reject(connection net.Conn, code, detail string) {
 }
 
 // rejectSession 给已注册会话发终止消息并触发关闭。
+// clampDetail 把错误回执正文压进协议上限以内。ErrorMessage.Validate 要求
+// 1..512 字节；detail 可能携带外来内容（如 DecodeMessage 对未知 type 的
+// %q 转义，可达 64KB），超限回执会被对端 Validate 拒收，错误分类随之丢失。
+// 截断按字节回退到 UTF-8 边界，并留出省略号余量。
+func clampDetail(detail string) string {
+	const limit = 480 // 512 上限减去截断后缀与富余
+	if len(detail) <= limit {
+		return detail
+	}
+	truncated := detail[:limit]
+	for len(truncated) > 0 && !utf8.ValidString(truncated) {
+		truncated = truncated[:len(truncated)-1]
+	}
+	return truncated + "…(truncated)"
+}
+
 func (server *ControlServer) rejectSession(sess *session, code, detail string) {
-	message := &common.ErrorMessage{Type: common.MessageError, Code: code, Message: detail}
+	message := &common.ErrorMessage{Type: common.MessageError, Code: code, Message: clampDetail(detail)}
 	if err := sess.deliver(message, true, server.config.Control.WriteTimeout); err != nil {
 		sess.end()
 	}

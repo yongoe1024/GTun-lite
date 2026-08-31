@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"gtun-lite/internal/common"
 	"gtun-lite/internal/logging"
@@ -87,7 +88,15 @@ func run() int {
 		log.Error("listen admin", "error", err)
 		return 1
 	}
-	adminServer := &http.Server{Handler: admin.Routes()}
+	// admin 无鉴权，超时与请求体上限（见 decodeBody）是仅有的连接层防线：
+	// 零值 http.Server 永不超时，慢速头发可无限占用连接与 goroutine。
+	adminServer := &http.Server{
+		Handler:           admin.Routes(),
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       2 * time.Minute,
+	}
 
 	// 控制面与管理面的运行期故障同样终止进程：残缺控制面比没有更糟
 	//（客户端全部失联），与探测反射器的 fail-fast 同一立场（见其注释）。
