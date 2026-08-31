@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net"
 	"runtime"
+	"sync"
 	"time"
 
 	"gtun-lite/internal/common"
@@ -31,6 +32,10 @@ type ControlClient struct {
 	identity common.DeviceID
 	log      *slog.Logger
 	window   *notice.Notice
+	// writeMu 串行化同一连接上的上行写：主循环（心跳/事件上报）与读
+	// goroutine（QUERY 回应）并发写同一 TCP 连接，JSON Lines 的消息边界
+	// 依赖单次完整 Write，交错即协议帧损坏。
+	writeMu sync.Mutex
 }
 
 // NewControlClient 创建控制客户端。
@@ -271,7 +276,8 @@ func (client *ControlClient) handleServerMessage(connection net.Conn, message co
 	}
 }
 
-// writeMessage 序列化并写一条上行消息（JSON Lines）。
+// writeMessage 序列化并写一条上行消息（JSON Lines）。writeMu 保证消息
+// 不与并发写交错（见结构体注释）。
 func (client *ControlClient) writeMessage(connection net.Conn, message common.Message) error {
 	data, err := json.Marshal(message)
 	if err != nil {
@@ -280,7 +286,9 @@ func (client *ControlClient) writeMessage(connection net.Conn, message common.Me
 	if err := connection.SetWriteDeadline(time.Now().Add(client.config.Control.WriteTimeout)); err != nil {
 		return err
 	}
+	client.writeMu.Lock()
 	_, err = connection.Write(append(data, '\n'))
+	client.writeMu.Unlock()
 	return err
 }
 
@@ -295,10 +303,10 @@ func networkLabel(config *common.NetworkConfig) string {
 // platform 返回注册上报的平台标识，与 devices 表的 CHECK 集合一致。
 func platform() string {
 	switch runtime.GOOS {
-	case "darwin", "linux", "windows":
+	case "darwin", "linux", "windows", "android":
 		return runtime.GOOS
 	default:
-		// 未预期的平台按 linux 报：注册不会被拒，真机验收只覆盖三平台，
+		// 未预期的平台按 linux 报：注册不会被拒，真机验收只覆盖已列平台，
 		// 这里不值得为不可达分支引入复杂度。
 		return "linux"
 	}

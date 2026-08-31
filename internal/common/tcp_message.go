@@ -241,8 +241,10 @@ func (message DeviceRegister) Validate() error {
 	if !utf8.ValidString(message.Name) || utf8.RuneCountInString(message.Name) < 1 || utf8.RuneCountInString(message.Name) > 128 {
 		return errors.New("device name must contain 1 to 128 UTF-8 characters")
 	}
-	if message.Platform != "linux" && message.Platform != "darwin" && message.Platform != "windows" {
-		return errors.New("platform must be linux, darwin or windows")
+	switch message.Platform {
+	case "linux", "darwin", "windows", "android":
+	default:
+		return errors.New("platform must be linux, darwin, windows or android")
 	}
 	return nil
 }

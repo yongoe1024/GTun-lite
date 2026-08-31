@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS devices (
         ),
     name TEXT NOT NULL,
     platform TEXT NOT NULL
-        CHECK (platform IN ('linux', 'darwin', 'windows')),
+        CHECK (platform IN ('linux', 'darwin', 'windows', 'android')),
     created_at TEXT NOT NULL
 );
 
