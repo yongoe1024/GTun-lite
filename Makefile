@@ -1,4 +1,4 @@
-.PHONY: build build-all build-linux build-darwin build-darwin-arm64 build-windows verify-manifest manifest test vet check schema clean clean-bin
+.PHONY: build build-all build-linux build-darwin build-darwin-arm64 build-windows build-android-lib verify-manifest manifest test vet check schema clean clean-bin
 
 GO ?= go
 LDFLAGS := -trimpath
@@ -49,7 +49,32 @@ build-windows: verify-manifest ## 构建 Windows amd64 程序包到 bin/windows/
 	cp cmd/server/server.yaml bin/windows/server/server.yaml
 	@echo "Windows packages: bin/windows/client/ bin/windows/server/"
 
-build-all: clean-bin build-linux build-darwin build-darwin-arm64 build-windows ## 构建全部平台程序包（先整体清空 bin/）
+# 安卓客户端内核 aar（gomobile bind）。两个环境硬约束：
+# ① JAVA_HOME 必须指 JDK 17——javac 26 生成的新 class 属性会让壳工程
+#   AGP 7.4 的老版 D8 在 dex 阶段 NPE，与用哪个 JDK 跑构建无关；
+# ② gomobile 经 go.mod 的 tool 指令调用（go tool gomobile）；其伴生工具
+#   gobind 靠 PATH 定位，故把 ~/go/bin 前置；NDK 由 ANDROID_HOME 定位。
+# 不并入 build-all：依赖本机 JDK17/NDK 环境，没有该环境的机器不应被
+# 全量构建绊倒；GTunAPP_DIR 存在时顺手把 aar 投进壳工程 libs/。
+ANDROID_JAVA_HOME ?= $(HOME)/Library/Java/JavaVirtualMachines/ms-17.0.20.1/Contents/Home
+ANDROID_HOME ?= $(HOME)/Library/Android/sdk
+GTUNAPP_DIR ?= $(HOME)/Downloads/GTunAPP
+
+build-android-lib: ## gomobile bind 出安卓内核 aar 到 bin/android/；GTunAPP_DIR 存在时同时投放壳工程 app/libs/
+	rm -rf bin/android
+	mkdir -p bin/android
+	JAVA_HOME=$(ANDROID_JAVA_HOME) ANDROID_HOME=$(ANDROID_HOME) PATH="$(HOME)/go/bin:$$PATH" $(GO) tool gomobile bind -target=android -androidapi 26 -o bin/android/gtunlite.aar ./cmd/gtunlib
+	@if [ -d "$(GTUNAPP_DIR)/.arkui-x/android/app/libs" ]; then \
+		cp bin/android/gtunlite.aar "$(GTUNAPP_DIR)/.arkui-x/android/app/libs/" ; \
+		if [ -f bin/android/gtunlite-sources.jar ]; then \
+			cp bin/android/gtunlite-sources.jar "$(GTUNAPP_DIR)/.arkui-x/android/app/libs/" ; \
+		fi ; \
+		echo "Android aar: bin/android/ -> $(GTUNAPP_DIR)/.arkui-x/android/app/libs/" ; \
+	else \
+		echo "Android aar: bin/android/ （GTunAPP_DIR 不存在，未投放壳工程）" ; \
+	fi
+
+build-all: clean-bin build-linux build-darwin build-darwin-arm64 build-windows ## 构建全部平台程序包（先整体清空 bin/；安卓 aar 另见 build-android-lib）
 
 clean-bin: ## 清空 bin/ 构建产物根目录
 	rm -rf bin/
