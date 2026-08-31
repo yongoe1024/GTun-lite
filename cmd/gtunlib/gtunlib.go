@@ -8,8 +8,8 @@
 // 配置 → 日志 → fd 预算 → 身份 → manager → 控制面。
 //
 // TUN 的获取走 androidfd 交付协议：内核在网络配置到达（拿到虚拟 IP）时经
-// EventListener.TunRequest 回调宿主，宿主完成 VPN 授权与 establish 后调
-// ProvideTunFd 送回。控制面本身走互联网，不依赖 TUN，因此授权框只会出现在
+// EventListener.TunRequest 同步回调宿主，宿主完成 establish 后直接返回 fd
+// （失败抛异常）。控制面本身走互联网，不依赖 TUN，因此授权框只会出现在
 // 「服务器已经认了这台设备」之后，不会白弹。
 package gtunlib
 
@@ -33,9 +33,11 @@ import (
 type EventListener interface {
 	// Notice 转发窗口中文提示，一行一条（与桌面端 stderr 内容一致，已带时刻）。
 	Notice(line string)
-	// TunRequest 内核要建 TUN：宿主完成 VPN 授权、establish 后必须调用
-	// ProvideTunFd 送回 fd（peers 是逗号分隔的对端虚拟 IP）。
-	TunRequest(mtu int64, localIP string, peers string)
+	// TunRequest 内核要建 TUN：宿主完成 establish 后返回 fd（对
+	// ParcelFileDescriptor 先 detachFd 再返回裸 fd，所有权随返回移交内核）；
+	// 失败返回非 nil 错误（Java 实现里抛异常，原因如实进入状态上报）。
+	// peers 是逗号分隔的对端虚拟 IP。
+	TunRequest(mtu int64, localIP string, peers string) (int64, error)
 }
 
 var (
@@ -69,11 +71,9 @@ func Start(configPath string) error {
 	return nil
 }
 
-// ProvideTunFd 宿主 establish() 成功后送回 fd（所有权移交，宿主侧 detachFd）。
-func ProvideTunFd(fd int64) error { return androidfd.ProvideTunFd(fd) }
-
 // Stop 停止当前会话：取消 context，控制面断连、Worker 拆除、TUN 关闭。
-// 幂等。
+// 幂等。fd 交付是同步请求-应答，不存在需要打断的等待者；会话停止后
+// 迟到的 fd 由调用方按栈生命周期关闭。
 func Stop() error {
 	mu.Lock()
 	c := cancel
@@ -83,7 +83,6 @@ func Stop() error {
 	if c != nil {
 		c()
 	}
-	androidfd.Abandon()
 	return nil
 }
 
@@ -137,8 +136,8 @@ func run(ctx context.Context, configPath string) {
 
 	manager := client.NewManager(config, identity, client.PlatformOpener(), stubRouteTable{}, log, window)
 	defer manager.Close()
-	// fd 交付协议接线：androidfd.Opener 要 fd 时经此回调宿主（VpnService
-	// establish 后 ProvideTunFd 送回）。漏接这根线，开栈必然
+	// fd 交付协议接线：androidfd.Opener 要 fd 时经此同步回调宿主
+	// （VpnService establish 后返回 fd）。不接线开栈必然
 	// 「requester not set」→ TUN_CREATE_FAILED。
 	androidfd.SetTunRequester(tunRequestAdapter{currentListener()})
 	control := client.NewControlClient(config, manager, identity, log, window)
@@ -196,9 +195,10 @@ func currentListener() EventListener {
 // tunRequestAdapter 把宿主 EventListener 适配成 androidfd.TunRequester。
 type tunRequestAdapter struct{ l EventListener }
 
-// RequestTun 转发内核的建 TUN 请求（宿主 establish 后须调 ProvideTunFd）。
-func (adapter tunRequestAdapter) RequestTun(mtu int64, localIP string, peers string) {
-	if adapter.l != nil {
-		adapter.l.TunRequest(mtu, localIP, peers)
+// RequestTun 同步转发内核的建 TUN 请求，返回宿主 establish 出的 fd。
+func (adapter tunRequestAdapter) RequestTun(mtu int64, localIP string, peers string) (int64, error) {
+	if adapter.l == nil {
+		return 0, fmt.Errorf("host event listener not set")
 	}
+	return adapter.l.TunRequest(mtu, localIP, peers)
 }
