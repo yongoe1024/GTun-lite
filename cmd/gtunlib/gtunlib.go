@@ -107,9 +107,13 @@ func run(ctx context.Context, configPath string, mySession uint64) {
 		if session == mySession {
 			running = false
 			cancel = nil
+			mu.Unlock()
+			notifyNotice("GTun 会话已结束")
+			return
 		}
 		mu.Unlock()
-		notifyNotice("GTun 会话已结束")
+		// 被快速重启顶替的旧会话安静退出：新会话正在运行，
+		// 「会话已结束」只属于最后一任。
 	}()
 
 	config, err := client.LoadClientConfig(configPath)

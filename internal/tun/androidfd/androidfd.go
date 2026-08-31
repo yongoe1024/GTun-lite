@@ -18,7 +18,6 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"sync"
 
 	"gtun-lite/internal/common"
 	"gtun-lite/internal/tun"
@@ -35,19 +34,14 @@ type TunRequester interface {
 	RequestTun(mtu int64, localIP string, peers string) (int64, error)
 }
 
-// requester 是当前注册的宿主回调，mu 保护注册与 Open 读取的并发
-// （注册发生在会话 goroutine，Open 发生在控制面读循环 goroutine）。
-var (
-	mu        sync.Mutex
-	requester TunRequester
-)
+// requester 是当前注册的宿主回调。写在会话 goroutine（gtunlib.run 装配时），
+// 读在其派生的控制面读循环 goroutine（Open 经 ApplyConfig/HandleConnect 进入）；
+// go 语句建立 happens-before（Go 内存模型），无需加锁。若调用结构改变
+// （如注册与开栈落在无派生关系的 goroutine），须重新评估同步方式。
+var requester TunRequester
 
 // SetTunRequester 注册宿主回调。会话启动时调用；覆盖式。
-func SetTunRequester(r TunRequester) {
-	mu.Lock()
-	defer mu.Unlock()
-	requester = r
-}
+func SetTunRequester(r TunRequester) { requester = r }
 
 // Device 是基于既有 fd 的 TUN 设备。Android 的 VpnService fd 读写裸 IPv4 包，
 // 无任何平台前缀，是全平台最薄的 Device 实现。
@@ -79,9 +73,7 @@ type Opener struct{}
 // Open 同步获取 fd 并包装为 Device。
 func (Opener) Open(ctx context.Context, name string, mtu int, localIP common.IPv4, peers []common.IPv4) (tun.Device, tun.RouteCleanup, error) {
 	_ = ctx
-	mu.Lock()
 	r := requester
-	mu.Unlock()
 	if r == nil {
 		return nil, tun.RouteCleanup{}, errors.New("android tun requester not set")
 	}
