@@ -47,14 +47,24 @@ var (
 	pending = -1
 	// delivered 是「pending 有新值」的信号；缓冲 1，重复送达不阻塞。
 	delivered = make(chan struct{}, 1)
+	// abandoned 是当前会话的放弃信号。每个会话开始时在 SetTunRequester
+	// 里换新——若只 close 一次，Stop 之后的下一个会话里这个已关闭的
+	// channel 会让所有 fd 等待立即误判为「已放弃」，断开再连必挂。
 	abandoned = make(chan struct{})
 )
 
-// SetTunRequester 注册宿主回调。Start 前调用一次；nil 清除。
+// SetTunRequester 注册宿主回调并开启新一轮交付会话（gtunlib 每次会话
+// 启动时调用）。重置放弃信号，使上一轮 Stop 的 Abandon 不再影响新会话；
+// 顺手排干上一会话遗留的未消费 fd（它随旧 VPN 接口一起失效，留着只泄漏）。
 func SetTunRequester(r TunRequester) {
 	mu.Lock()
 	defer mu.Unlock()
 	requester = r
+	if pending >= 0 {
+		_ = os.NewFile(uintptr(pending), "gtun-stale-tun").Close()
+		pending = -1
+	}
+	abandoned = make(chan struct{})
 }
 
 // ProvideTunFd 由宿主在 establish() 成功后送回 fd。fd 所有权随之移交本包
@@ -86,12 +96,13 @@ func ProvideTunFd(fd int64) error {
 	return nil
 }
 
-// Abandon 让所有等待 fd 的 Open 立即失败退出（宿主停止整个内核时调用），
-// 避免授权框被拒后内核 goroutine 无限挂着。
+// Abandon 让当前会话所有等待 fd 的 Open 立即失败退出（宿主停止整个内核
+// 时调用）。信号随下一个会话的 SetTunRequester 重置。
 func Abandon() {
+	mu.Lock()
+	defer mu.Unlock()
 	select {
 	case <-abandoned:
-		// 已 abandonment 过，不再重复关（close 幂等需自建 once；直接判空即可）。
 	default:
 		close(abandoned)
 	}
@@ -133,6 +144,7 @@ func (Opener) Open(ctx context.Context, name string, mtu int, localIP common.IPv
 	if fd >= 0 {
 		pending = -1
 	}
+	abandonedCh := abandoned // 快照：等待期间会话可能被重置，别读同一个变量
 	mu.Unlock()
 	if fd < 0 {
 		if r == nil {
@@ -149,7 +161,7 @@ func (Opener) Open(ctx context.Context, name string, mtu int, localIP common.IPv
 			if fd < 0 {
 				goto wait // 信号被前一轮消费完，继续等
 			}
-		case <-abandoned:
+		case <-abandonedCh:
 			return nil, tun.RouteCleanup{}, errors.New("tun fd wait abandoned")
 		case <-time.After(requestTimeout):
 			return nil, tun.RouteCleanup{}, errors.New("tun fd wait timed out (host never provided fd)")
