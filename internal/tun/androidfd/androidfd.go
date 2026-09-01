@@ -5,8 +5,9 @@
 // 的。establish() 必须由宿主壳层在拿到虚拟 IP 之后调用——VPN 授权框也只能由
 // 宿主弹出——所以 Open 的时序是「内核要 fd → 同步回调宿主 → 宿主 establish
 // → 返回 fd」。前提：授权在会话启动前由宿主解决，establish 不做 UI 操作，
-// 同步等待无阻塞风险。fd 是一次性资源：os.File 关闭即失效，每次栈重建都
-// 重新走一遍交付。
+// 同步等待无阻塞风险。fd 是一次性资源：宿主 detachFd 交付的是阻塞 fd，
+// 接手后先置非阻塞再包 os.File（否则不进 runtime poller，Close 无法唤醒
+// 读循环），os.File 关闭即失效，每次栈重建都重新走一遍交付。
 //
 // 路由与地址由 VpnService.Builder 声明式下发（随 VPN 接口生灭），本包不做
 // 任何系统路由操作；RouteCleanup 只负责关闭设备。
@@ -18,6 +19,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 
 	"gtun-lite/internal/common"
 	"gtun-lite/internal/tun"
@@ -34,14 +36,22 @@ type TunRequester interface {
 	RequestTun(mtu int64, localIP string, peers string) (int64, error)
 }
 
-// requester 是当前注册的宿主回调。写在会话 goroutine（gtunlib.run 装配时），
-// 读在其派生的控制面读循环 goroutine（Open 经 ApplyConfig/HandleConnect 进入）；
-// go 语句建立 happens-before（Go 内存模型），无需加锁。若调用结构改变
-// （如注册与开栈落在无派生关系的 goroutine），须重新评估同步方式。
-var requester TunRequester
+// requester 是当前注册的宿主回调。写在新会话装配（gtunlib.run 调
+// SetTunRequester），读在控制面读循环（Open 经 ApplyConfig/HandleConnect
+// 进入）。同一会话内二者有 go 语句派生关系；但 Stop 不等旧会话收尾即可
+// Start——旧会话的读循环可能仍在处理最后一份配置时，新会话已在写此变量，
+// 跨会话没有 happens-before，须以 requesterMu 互斥。
+var (
+	requesterMu sync.Mutex
+	requester   TunRequester
+)
 
 // SetTunRequester 注册宿主回调。会话启动时调用；覆盖式。
-func SetTunRequester(r TunRequester) { requester = r }
+func SetTunRequester(r TunRequester) {
+	requesterMu.Lock()
+	requester = r
+	requesterMu.Unlock()
+}
 
 // Device 是基于既有 fd 的 TUN 设备。Android 的 VpnService fd 读写裸 IPv4 包，
 // 无任何平台前缀，是全平台最薄的 Device 实现。
@@ -50,9 +60,15 @@ type Device struct {
 	name string
 }
 
-// NewDevice 包装一个 VpnService fd。fd 所有权归 Device，Close 即关闭。
-func NewDevice(fd int, name string) *Device {
-	return &Device{f: os.NewFile(uintptr(fd), "gtun-tun"), name: name}
+// NewDevice 包装一个 VpnService fd。fd 先置非阻塞再进 os.NewFile：宿主
+// establish 交付的是阻塞 fd，只有非阻塞 fd 被 runtime poller 接管，Close
+// 才能唤醒数据面读循环（与 mac/linux 的 Open 同款约束，依据见
+// tun.DataPlane.Close 的排空说明）。fd 所有权归 Device，Close 即关闭。
+func NewDevice(fd int, name string) (*Device, error) {
+	if err := setNonblock(fd); err != nil {
+		return nil, fmt.Errorf("set tun fd nonblocking: %w", err)
+	}
+	return &Device{f: os.NewFile(uintptr(fd), "gtun-tun"), name: name}, nil
 }
 
 // Read 读取一个裸 IPv4 包。
@@ -73,18 +89,23 @@ type Opener struct{}
 // Open 同步获取 fd 并包装为 Device。
 func (Opener) Open(ctx context.Context, name string, mtu int, localIP common.IPv4, peers []common.IPv4) (tun.Device, tun.RouteCleanup, error) {
 	_ = ctx
+	requesterMu.Lock()
 	r := requester
+	requesterMu.Unlock()
 	if r == nil {
 		return nil, tun.RouteCleanup{}, errors.New("android tun requester not set")
 	}
-	fdValue, err := requester.RequestTun(int64(mtu), string(localIP), joinIPs(peers))
+	fdValue, err := r.RequestTun(int64(mtu), string(localIP), joinIPs(peers))
 	if err != nil {
 		return nil, tun.RouteCleanup{}, fmt.Errorf("host establish: %w", err)
 	}
 	if fdValue <= 0 || fdValue > 1<<31-1 {
 		return nil, tun.RouteCleanup{}, fmt.Errorf("host returned invalid tun fd %d", fdValue)
 	}
-	device := NewDevice(int(fdValue), name)
+	device, err := NewDevice(int(fdValue), name)
+	if err != nil {
+		return nil, tun.RouteCleanup{}, err
+	}
 	// 路由由 VpnService 声明式管理，无系统资源可回滚；清理即关设备。
 	cleanup := tun.NewRouteCleanup(name, hostRouteEntries(name, peers), func() error {
 		return device.Close()

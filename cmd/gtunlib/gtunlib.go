@@ -132,7 +132,9 @@ func run(ctx context.Context, configPath string, mySession uint64) {
 	}
 	defer closeLogs()
 
-	window := notice.New(newNoticePipe())
+	noticePipe := newNoticePipe()
+	defer noticePipe.Close()
+	window := notice.New(noticePipe)
 
 	if err := client.EnsureHelperFDHeadroom(config.Punch.HelperCount); err != nil {
 		log.Error("helper fd headroom", "error", err)
@@ -170,15 +172,16 @@ func run(ctx context.Context, configPath string, mySession uint64) {
 // 冲突类检查在安卓上不存在检查对象。
 type stubRouteTable struct{}
 
-func (stubRouteTable) DefaultGateway() (netip.Addr, bool, error)   { return netip.Addr{}, false, nil }
-func (stubRouteTable) LocalAddresses() ([]netip.Addr, error)       { return nil, nil }
-func (stubRouteTable) HasHostRoute(netip.Addr) (bool, error)       { return false, nil }
+func (stubRouteTable) DefaultGateway() (netip.Addr, bool, error)  { return netip.Addr{}, false, nil }
+func (stubRouteTable) LocalAddresses() ([]netip.Addr, error)      { return nil, nil }
+func (stubRouteTable) HasHostRoute(netip.Addr) (bool, error)      { return false, nil }
 func (stubRouteTable) HostRouteDangling(netip.Addr) (bool, error) { return false, nil }
-func (stubRouteTable) DeleteHostRoute(netip.Addr) error            { return nil }
+func (stubRouteTable) DeleteHostRoute(netip.Addr) error           { return nil }
 
 // newNoticePipe 建一条管道把窗口提示转发给 EventListener.Notice。写侧交给
-// notice.Notice，读侧逐行推给宿主；会话结束管道随写侧关闭而终结。
-func newNoticePipe() io.Writer {
+// notice.Notice，读侧逐行推给宿主；run 的 defer 关闭写侧，读侧 Scan 随之
+// 结束、goroutine 退出——否则每次启停会话都泄漏一个阻塞在管道上的 goroutine。
+func newNoticePipe() *io.PipeWriter {
 	reader, writer := io.Pipe()
 	go func() {
 		scanner := bufio.NewScanner(reader)
